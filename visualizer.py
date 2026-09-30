@@ -5,6 +5,7 @@ psycho overdrive, machine-gun multi-band triggering, screen impact shake,
 and dual-monitor festival rave lighting schemes.
 """
 
+import time
 import math
 import random
 import colorsys
@@ -102,6 +103,12 @@ class VisualizerEngine:
         self.shockwave_max_radius = math.hypot(width / 2, height / 2)
         self.shockwave_active = False
 
+        # Direct Screen Render Outputs for 100% Exact Multi-Device Synchronization
+        self.last_render_rgb_0 = (0, 0, 0)
+        self.last_render_rgb_1 = (0, 0, 0)
+        self.last_eff_intensity_0 = 0.0
+        self.last_eff_intensity_1 = 0.0
+
     def resize(self, width, height):
         self.width = max(100, width)
         self.height = max(100, height)
@@ -154,6 +161,156 @@ class VisualizerEngine:
             self.safe_mode = False
             self.decay_rate = max(30.0, self.decay_rate)
         return self.overdrive_mode
+
+    def get_sync_packet(self, audio_state, is_beat_event=False):
+        """Generate high-fidelity frame synchronization packet for connected clients."""
+        spec = audio_state.get("spectrum_bars", [])
+        if hasattr(spec, "tolist"):
+            spec = spec.tolist()
+        bars_clean = [round(float(x), 2) for x in spec[:24]]
+
+        return {
+            "type": "BEAT_SYNC" if is_beat_event else "FRAME_SYNC",
+            "timestamp": time.time(),
+            # Modes & Configuration
+            "mode": self.mode,
+            "palette": self.palette_name,
+            "style": self.current_style,
+            "dual_scheme": self.dual_scheme,
+            "safe": bool(self.safe_mode),
+            "overdrive": bool(self.overdrive_mode),
+            "decay": round(float(self.decay_rate), 1),
+            "alternating_side": int(self.alternating_side),
+            # Palette Colors
+            "color": [int(c) for c in self.current_color],
+            "secondary_color": [int(c) for c in self.secondary_color],
+            # Exact rendered RGB colors for displays
+            "final_rgb_0": [int(c) for c in self.last_render_rgb_0],
+            "final_rgb_1": [int(c) for c in self.last_render_rgb_1],
+            "eff_intensity_0": round(float(self.last_eff_intensity_0), 3),
+            "eff_intensity_1": round(float(self.last_eff_intensity_1), 3),
+            # Strobe dynamics
+            "kick_intensity": round(float(self.kick_intensity), 3),
+            "snare_intensity": round(float(self.snare_intensity), 3),
+            "hihat_intensity": round(float(self.hihat_intensity), 3),
+            "drop_intensity": round(float(self.drop_intensity), 3),
+            "kick_intensity_left": round(float(self.kick_intensity_left), 3),
+            "kick_intensity_right": round(float(self.kick_intensity_right), 3),
+            # Multi-Pulse Machine-Gun Strobe chopping
+            "burst_remaining": int(self.burst_remaining),
+            "burst_is_on": bool(self.burst_is_on),
+            # Screen shake & Shockwave
+            "shake_x": int(self.shake_x),
+            "shake_y": int(self.shake_y),
+            "shockwave_active": bool(self.shockwave_active),
+            "shockwave_progress": round(float(self.shockwave_radius / max(1.0, self.shockwave_max_radius)), 3),
+            # Live Audio meters & Spectrum for Client HUD
+            "bpm": round(float(audio_state.get("bpm", 0.0)), 1),
+            "bass_level": round(float(audio_state.get("bass_level", 0.0)), 3),
+            "mid_level": round(float(audio_state.get("mid_level", 0.0)), 3),
+            "high_level": round(float(audio_state.get("high_level", 0.0)), 3),
+            "total_level": round(float(audio_state.get("total_level", 0.0)), 3),
+            "spectrum_bars": bars_clean,
+            # Trigger flags
+            "is_kick": bool(audio_state.get("is_kick", False)),
+            "is_snare": bool(audio_state.get("is_snare", False)),
+            "is_hihat": bool(audio_state.get("is_hihat", False)),
+            "is_drop": bool(audio_state.get("is_drop", False)),
+        }
+
+    def apply_sync_packet(self, pkt):
+        """Apply full frame synchronization packet from Host."""
+        # 1. Mode, Style, Palette, Scheme
+        if "mode" in pkt and pkt["mode"] != self.mode:
+            self.mode = pkt["mode"]
+            if self.mode in STROBE_MODES:
+                self.mode_index = STROBE_MODES.index(self.mode)
+
+        if "style" in pkt and pkt["style"] != self.current_style:
+            self.current_style = pkt["style"]
+            if self.current_style in self.visual_styles:
+                self.style_index = self.visual_styles.index(self.current_style)
+
+        if "palette" in pkt and pkt["palette"] != self.palette_name:
+            self.set_palette(pkt["palette"])
+
+        if "dual_scheme" in pkt and pkt["dual_scheme"] != self.dual_scheme:
+            self.dual_scheme = pkt["dual_scheme"]
+            if self.dual_scheme in DUAL_SCHEMES:
+                self.dual_scheme_index = DUAL_SCHEMES.index(self.dual_scheme)
+
+        # 2. Physics & Engine Flags
+        if "safe" in pkt:
+            self.safe_mode = bool(pkt["safe"])
+        if "overdrive" in pkt:
+            self.overdrive_mode = bool(pkt["overdrive"])
+        if "decay" in pkt:
+            self.decay_rate = float(pkt["decay"])
+        if "alternating_side" in pkt:
+            self.alternating_side = int(pkt["alternating_side"])
+
+        # 3. Base Colors
+        if "color" in pkt:
+            self.current_color = tuple(pkt["color"])
+        if "secondary_color" in pkt:
+            self.secondary_color = tuple(pkt["secondary_color"])
+
+        # 4. Exact Rendered RGBs & Effective Intensities
+        if "final_rgb_0" in pkt:
+            self.last_render_rgb_0 = tuple(pkt["final_rgb_0"])
+        if "final_rgb_1" in pkt:
+            self.last_render_rgb_1 = tuple(pkt["final_rgb_1"])
+        if "eff_intensity_0" in pkt:
+            self.last_eff_intensity_0 = float(pkt["eff_intensity_0"])
+        if "eff_intensity_1" in pkt:
+            self.last_eff_intensity_1 = float(pkt["eff_intensity_1"])
+
+        # 5. Strobe Dynamics
+        if "kick_intensity" in pkt:
+            self.kick_intensity = float(pkt["kick_intensity"])
+        if "snare_intensity" in pkt:
+            self.snare_intensity = float(pkt["snare_intensity"])
+        if "hihat_intensity" in pkt:
+            self.hihat_intensity = float(pkt["hihat_intensity"])
+        if "drop_intensity" in pkt:
+            self.drop_intensity = float(pkt["drop_intensity"])
+        if "kick_intensity_left" in pkt:
+            self.kick_intensity_left = float(pkt["kick_intensity_left"])
+        if "kick_intensity_right" in pkt:
+            self.kick_intensity_right = float(pkt["kick_intensity_right"])
+
+        # 6. Burst Chopping
+        if "burst_remaining" in pkt:
+            self.burst_remaining = int(pkt["burst_remaining"])
+        if "burst_is_on" in pkt:
+            self.burst_is_on = bool(pkt["burst_is_on"])
+
+        # 7. Screen Shake & Shockwave
+        if "shake_x" in pkt:
+            self.shake_x = int(pkt["shake_x"])
+            self.shake_y = int(pkt.get("shake_y", 0))
+        if "shockwave_active" in pkt:
+            self.shockwave_active = bool(pkt["shockwave_active"])
+            if "shockwave_progress" in pkt:
+                self.shockwave_radius = float(pkt["shockwave_progress"]) * self.shockwave_max_radius
+
+    def update_client_fallback(self, dt):
+        """Smoothly decay strobe intensity if sync stream drops or pauses."""
+        decay_multiplier = 1.6 if self.overdrive_mode else 1.0
+        actual_decay = (self.decay_rate * decay_multiplier) * (0.5 if self.safe_mode or self.mode == MODE_SMOOTH_PULSE else 1.0)
+        self.kick_intensity = max(0.0, self.kick_intensity - actual_decay * dt)
+        self.kick_intensity_left = max(0.0, self.kick_intensity_left - actual_decay * dt)
+        self.kick_intensity_right = max(0.0, self.kick_intensity_right - actual_decay * dt)
+        self.snare_intensity = max(0.0, self.snare_intensity - (actual_decay * 1.5) * dt)
+        self.hihat_intensity = max(0.0, self.hihat_intensity - (actual_decay * 2.2) * dt)
+        self.drop_intensity = max(0.0, self.drop_intensity - (actual_decay * 0.8) * dt)
+
+        # Decay forced RGBs down to black
+        factor = max(0.0, 1.0 - (actual_decay * dt))
+        self.last_render_rgb_0 = (int(self.last_render_rgb_0[0] * factor), int(self.last_render_rgb_0[1] * factor), int(self.last_render_rgb_0[2] * factor))
+        self.last_render_rgb_1 = (int(self.last_render_rgb_1[0] * factor), int(self.last_render_rgb_1[1] * factor), int(self.last_render_rgb_1[2] * factor))
+        self.last_eff_intensity_0 *= factor
+        self.last_eff_intensity_1 *= factor
 
     def trigger_kick(self):
         """Trigger kick strobe flash & advance palette color with multi-pulse train."""
@@ -337,21 +494,44 @@ class VisualizerEngine:
 
         return (r, g, b), eff_intensity
 
-    def render(self, screen, audio_state, monitors=None, is_dual=False):
+    def render(self, screen, audio_state, monitors=None, is_dual=False, is_client_sync=False):
         """Render strobe frames across one or both monitors with shake and multi-band effects."""
         # Screen shake offset
         sx, sy = self.shake_x, self.shake_y
 
         if is_dual and monitors and len(monitors) >= 2:
-            self._render_dual(screen, audio_state, monitors, sx, sy)
+            self._render_dual(screen, audio_state, monitors, sx, sy, is_client_sync=is_client_sync)
         else:
             full_rect = pygame.Rect(sx, sy, self.width, self.height)
-            self._render_single(screen, audio_state, full_rect)
+            if is_client_sync:
+                # If host is alternating, pick the active side for single monitor client
+                if self.dual_scheme == DUAL_SCHEME_ALTERNATING and self.alternating_side == 1:
+                    chosen_rgb = self.last_render_rgb_1
+                    chosen_eff = self.last_eff_intensity_1
+                else:
+                    chosen_rgb = self.last_render_rgb_0
+                    chosen_eff = self.last_eff_intensity_0
+                self._render_single(screen, audio_state, full_rect, monitor_idx=0, forced_rgb=chosen_rgb, forced_eff=chosen_eff)
+            else:
+                self._render_single(screen, audio_state, full_rect, monitor_idx=0)
+                self.last_render_rgb_1 = self.last_render_rgb_0
+                self.last_eff_intensity_1 = self.last_eff_intensity_0
 
-    def _render_single(self, screen, audio_state, rect, custom_col=None, custom_intensity=None):
-        base_col = custom_col if custom_col is not None else self.current_color
-        intensity = custom_intensity if custom_intensity is not None else self.kick_intensity
-        (r, g, b), eff_intensity = self._calc_color_and_intensity(base_col, intensity, audio_state)
+    def _render_single(self, screen, audio_state, rect, custom_col=None, custom_intensity=None, monitor_idx=0, forced_rgb=None, forced_eff=None):
+        if forced_rgb is not None:
+            r, g, b = forced_rgb
+            eff_intensity = forced_eff if forced_eff is not None else 1.0
+        else:
+            base_col = custom_col if custom_col is not None else self.current_color
+            intensity = custom_intensity if custom_intensity is not None else self.kick_intensity
+            (r, g, b), eff_intensity = self._calc_color_and_intensity(base_col, intensity, audio_state)
+
+        if monitor_idx == 0:
+            self.last_render_rgb_0 = (r, g, b)
+            self.last_eff_intensity_0 = eff_intensity
+        else:
+            self.last_render_rgb_1 = (r, g, b)
+            self.last_eff_intensity_1 = eff_intensity
 
         if self.current_style == "Solid Fullscreen":
             screen.fill((r, g, b), rect)
@@ -398,13 +578,20 @@ class VisualizerEngine:
                 beam_surf.fill((r, g, b, int(240 * eff_intensity)))
                 screen.blit(beam_surf, (rect.x, cy - beam_height // 2))
 
-    def _render_dual(self, screen, audio_state, monitors, sx, sy):
+        return (r, g, b), eff_intensity
+
+    def _render_dual(self, screen, audio_state, monitors, sx, sy, is_client_sync=False):
         m0 = monitors[0].rect.move(sx, sy)
         m1 = monitors[1].rect.move(sx, sy)
 
+        if is_client_sync:
+            self._render_single(screen, audio_state, m0, monitor_idx=0, forced_rgb=self.last_render_rgb_0, forced_eff=self.last_eff_intensity_0)
+            self._render_single(screen, audio_state, m1, monitor_idx=1, forced_rgb=self.last_render_rgb_1, forced_eff=self.last_eff_intensity_1)
+            return
+
         if self.dual_scheme == DUAL_SCHEME_SYNCED:
-            self._render_single(screen, audio_state, m0, self.current_color, self.kick_intensity)
-            self._render_single(screen, audio_state, m1, self.current_color, self.kick_intensity)
+            self._render_single(screen, audio_state, m0, self.current_color, self.kick_intensity, monitor_idx=0)
+            self._render_single(screen, audio_state, m1, self.current_color, self.kick_intensity, monitor_idx=1)
 
         elif self.dual_scheme == DUAL_SCHEME_ALTERNATING:
             # In Overdrive, ping-pong at blistering speeds
@@ -412,13 +599,15 @@ class VisualizerEngine:
             left_int = self.kick_intensity_left + ambient_floor
             right_int = self.kick_intensity_right + ambient_floor
 
-            self._render_single(screen, audio_state, m0, self.current_color, min(1.0, left_int))
-            self._render_single(screen, audio_state, m1, self.secondary_color, min(1.0, right_int))
+            self._render_single(screen, audio_state, m0, self.current_color, min(1.0, left_int), monitor_idx=0)
+            self._render_single(screen, audio_state, m1, self.secondary_color, min(1.0, right_int), monitor_idx=1)
 
         elif self.dual_scheme == DUAL_SCHEME_CONTRAST:
-            self._render_single(screen, audio_state, m0, self.current_color, self.kick_intensity)
-            self._render_single(screen, audio_state, m1, self.secondary_color, self.kick_intensity)
+            self._render_single(screen, audio_state, m0, self.current_color, self.kick_intensity, monitor_idx=0)
+            self._render_single(screen, audio_state, m1, self.secondary_color, self.kick_intensity, monitor_idx=1)
 
         elif self.dual_scheme == DUAL_SCHEME_PANORAMIC:
             combined_rect = pygame.Rect(sx, sy, self.width, self.height)
-            self._render_single(screen, audio_state, combined_rect, self.current_color, self.kick_intensity)
+            self._render_single(screen, audio_state, combined_rect, self.current_color, self.kick_intensity, monitor_idx=0)
+            self.last_render_rgb_1 = self.last_render_rgb_0
+            self.last_eff_intensity_1 = self.last_eff_intensity_0

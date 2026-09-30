@@ -376,8 +376,13 @@ class HUD:
         diag_str = f"In: {int(raw_p * 100)}% (AGC: {agc_g:.1f}x)"
 
         if sync_mgr.role == ROLE_CLIENT:
-            dev_tag = f"[Client Synced] {sync_mgr.client_connected_host or 'Connecting'}"
+            lat = sync_mgr.client_latency_ms
+            lat_str = f" ({lat:.0f}ms)" if lat > 0 else ""
+            dev_tag = f"[Client Synced] {sync_mgr.client_connected_host or 'Connecting'}{lat_str}"
             dev_col = (100, 240, 255)
+        elif sync_mgr.role == ROLE_HOST:
+            dev_tag = f"{audio_mgr.current_device_name} | {diag_str} | Clients: {sync_mgr.client_count}"
+            dev_col = (255, 120, 220)
         else:
             dev_tag = f"{audio_mgr.current_device_name} | {diag_str}"
             dev_col = (100, 255, 150) if not audio_mgr.demo_mode else (255, 180, 50)

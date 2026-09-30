@@ -6,6 +6,7 @@ and multi-computer Bluetooth & Network synchronization (Host / Client).
 
 import sys
 import time
+import numpy as np
 import pygame
 from config import (
     FPS_CAP,
@@ -50,6 +51,28 @@ class BeatStrobeApp:
         self.clock = pygame.time.Clock()
         self.running = True
         self.last_click_time = 0.0
+
+        # Synchronized audio state for Client HUD meters
+        self.client_audio_state = {
+            "is_kick": False,
+            "is_snare": False,
+            "is_hihat": False,
+            "is_drop": False,
+            "bass_level": 0.0,
+            "mid_level": 0.0,
+            "high_level": 0.0,
+            "hihat_level": 0.0,
+            "total_level": 0.0,
+            "spectrum_bars": np.zeros(24, dtype=np.float32),
+            "bpm": 0.0,
+            "bpm_confidence": 1.0,
+            "raw_waveform": np.zeros(1024, dtype=np.float32),
+            "overdrive": True,
+            "raw_peak": 0.0,
+            "agc_gain": 1.0,
+            "preamp_gain": 1.8,
+        }
+        self.client_last_sync_time = 0.0
 
     def on_display_mode_change(self):
         self.screen, self.screen_w, self.screen_h, self.is_dual = self.display_mgr.apply_current_mode()
@@ -186,86 +209,72 @@ class BeatStrobeApp:
                         )
 
                 # 2. Audio & Sync State Processing
-                if self.sync_mgr.role == ROLE_CLIENT:
-                    incoming_packets = self.sync_mgr.get_incoming_beats()
-                    audio_state = self.audio_mgr.get_latest_state()
+                is_client = (self.sync_mgr.role == ROLE_CLIENT)
+                is_host = (self.sync_mgr.role == ROLE_HOST)
 
-                    for pkt in incoming_packets:
-                        if pkt.get("type") in ("BEAT", "STATE"):
+                if is_client:
+                    incoming_packets = self.sync_mgr.get_incoming_beats()
+
+                    if incoming_packets:
+                        self.client_last_sync_time = now
+
+                        # Process beat trigger events
+                        for pkt in incoming_packets:
                             if pkt.get("is_drop"):
                                 self.visualizer.trigger_drop()
                             if pkt.get("is_kick"):
                                 self.visualizer.trigger_kick()
-                                self.visualizer.kick_intensity = pkt.get("intensity", 1.0)
                             if pkt.get("is_snare"):
                                 self.visualizer.trigger_snare()
                             if pkt.get("is_hihat"):
                                 self.visualizer.trigger_hihat()
 
-                            if "color" in pkt:
-                                self.visualizer.current_color = tuple(pkt["color"])
-                            if "secondary_color" in pkt:
-                                self.visualizer.secondary_color = tuple(pkt["secondary_color"])
-                            if "palette" in pkt:
-                                self.visualizer.set_palette(pkt["palette"])
-                            if "mode" in pkt:
-                                self.visualizer.mode = pkt["mode"]
-                            if "decay" in pkt:
-                                self.visualizer.decay_rate = pkt["decay"]
-                            if "safe" in pkt:
-                                self.visualizer.safe_mode = pkt["safe"]
-                            if "overdrive" in pkt:
-                                self.visualizer.overdrive_mode = pkt["overdrive"]
-                            if "bpm" in pkt:
-                                audio_state["bpm"] = pkt["bpm"]
-                            if "bass_level" in pkt:
-                                audio_state["bass_level"] = pkt["bass_level"]
-                                audio_state["mid_level"] = pkt.get("mid_level", 0.0)
-                                audio_state["high_level"] = pkt.get("high_level", 0.0)
-                                audio_state["total_level"] = pkt.get("total_level", 0.0)
+                        # Apply newest full frame synchronization state from host
+                        last_pkt = incoming_packets[-1]
+                        self.visualizer.apply_sync_packet(last_pkt)
+
+                        # Update client audio state for HUD rendering
+                        self.client_audio_state["bpm"] = last_pkt.get("bpm", 0.0)
+                        self.client_audio_state["bass_level"] = last_pkt.get("bass_level", 0.0)
+                        self.client_audio_state["mid_level"] = last_pkt.get("mid_level", 0.0)
+                        self.client_audio_state["high_level"] = last_pkt.get("high_level", 0.0)
+                        self.client_audio_state["total_level"] = last_pkt.get("total_level", 0.0)
+                        bars = last_pkt.get("spectrum_bars", [])
+                        if bars:
+                            self.client_audio_state["spectrum_bars"] = np.array(bars, dtype=np.float32)
+
+                    else:
+                        # Smooth decay fallback if stream paused or packet delayed
+                        if now - self.client_last_sync_time > 0.035:
+                            self.visualizer.update_client_fallback(dt)
+
+                    audio_state = self.client_audio_state
 
                 else:
                     audio_state = self.audio_mgr.get_latest_state()
+                    self.visualizer.update(dt, audio_state)
 
-                    if self.sync_mgr.role == ROLE_HOST:
-                        is_kick = audio_state.get("is_kick", False)
-                        is_snare = audio_state.get("is_snare", False)
-                        is_hihat = audio_state.get("is_hihat", False)
-                        is_drop = audio_state.get("is_drop", False)
-
-                        if is_kick or is_snare or is_hihat or is_drop or (now - last_host_sync_time > 0.20):
-                            last_host_sync_time = now
-                            packet = {
-                                "type": "BEAT" if (is_kick or is_snare or is_hihat or is_drop) else "STATE",
-                                "is_kick": is_kick,
-                                "is_snare": is_snare,
-                                "is_hihat": is_hihat,
-                                "is_drop": is_drop,
-                                "color": list(self.visualizer.current_color),
-                                "secondary_color": list(self.visualizer.secondary_color),
-                                "palette": self.visualizer.palette_name,
-                                "mode": self.visualizer.mode,
-                                "decay": self.visualizer.decay_rate,
-                                "safe": self.visualizer.safe_mode,
-                                "overdrive": self.visualizer.overdrive_mode,
-                                "dual_side": self.visualizer.alternating_side,
-                                "intensity": self.visualizer.kick_intensity if is_kick else 0.0,
-                                "bpm": audio_state.get("bpm", 0.0),
-                                "bass_level": audio_state.get("bass_level", 0.0),
-                                "mid_level": audio_state.get("mid_level", 0.0),
-                                "high_level": audio_state.get("high_level", 0.0),
-                                "total_level": audio_state.get("total_level", 0.0),
-                            }
-                            self.sync_mgr.broadcast_beat(packet)
-
-                # 3. Update physics & timers
-                self.visualizer.update(dt, audio_state)
+                # 3. Update HUD timers
                 self.hud.update(dt)
 
-                # 4. Render strobe effects across monitors
+                # 4. Render strobe effects across monitors (exact synchronized match)
                 self.visualizer.render(
-                    self.screen, audio_state, self.display_mgr.monitors, self.is_dual
+                    self.screen, audio_state, self.display_mgr.monitors, self.is_dual, is_client_sync=is_client
                 )
+
+                # 5. Broadcast to connected clients (Host only)
+                if is_host:
+                    is_kick = audio_state.get("is_kick", False)
+                    is_snare = audio_state.get("is_snare", False)
+                    is_hihat = audio_state.get("is_hihat", False)
+                    is_drop = audio_state.get("is_drop", False)
+                    has_beat = bool(is_kick or is_snare or is_hihat or is_drop)
+
+                    # Stream at 50 Hz OR immediately upon any beat event
+                    if has_beat or (now - last_host_sync_time >= 0.020):
+                        last_host_sync_time = now
+                        packet = self.visualizer.get_sync_packet(audio_state, is_beat_event=has_beat)
+                        self.sync_mgr.broadcast_beat(packet)
 
                 # 5. Render HUD overlay
                 self.hud.render(

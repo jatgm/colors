@@ -193,9 +193,16 @@ class SyncManager:
         while self.host_running and self.host_bt_sock:
             try:
                 conn, addr = self.host_bt_sock.accept()
+                try:
+                    conn.setblocking(False)
+                except Exception:
+                    pass
                 with self.lock:
                     self.connected_clients.append(conn)
                     self.client_count = len(self.connected_clients)
+                t_cli = threading.Thread(target=self._host_client_reader_worker, args=(conn,), daemon=True)
+                t_cli.start()
+                self.threads.append(t_cli)
             except Exception:
                 break
 
@@ -203,11 +210,53 @@ class SyncManager:
         while self.host_running and self.host_tcp_sock:
             try:
                 conn, addr = self.host_tcp_sock.accept()
+                try:
+                    conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                    conn.setblocking(False)
+                except Exception:
+                    pass
                 with self.lock:
                     self.connected_clients.append(conn)
                     self.client_count = len(self.connected_clients)
+                t_cli = threading.Thread(target=self._host_client_reader_worker, args=(conn,), daemon=True)
+                t_cli.start()
+                self.threads.append(t_cli)
             except Exception:
                 break
+
+    def _host_client_reader_worker(self, client_sock):
+        """Read incoming ping/pong requests and detect client disconnection."""
+        buf = b""
+        while self.host_running:
+            try:
+                r, _, _ = select.select([client_sock], [], [], 2.0)
+                if not r:
+                    continue
+                data = client_sock.recv(1024)
+                if not data:
+                    break
+                buf += data
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    if line.strip():
+                        try:
+                            pkt = json.loads(line.decode("utf-8"))
+                            if pkt.get("type") == "PING":
+                                pong = json.dumps({"type": "PONG", "t": pkt.get("t", 0.0)}).encode("utf-8") + b"\n"
+                                client_sock.sendall(pong)
+                        except Exception:
+                            pass
+            except Exception:
+                break
+
+        with self.lock:
+            if client_sock in self.connected_clients:
+                self.connected_clients.remove(client_sock)
+                self.client_count = len(self.connected_clients)
+        try:
+            client_sock.close()
+        except Exception:
+            pass
 
     def _host_beacon_worker(self):
         """Periodically broadcast UDP discovery packets on local subnet."""
@@ -234,23 +283,27 @@ class SyncManager:
         udp_sock.close()
 
     def broadcast_beat(self, packet_dict):
-        """Broadcast beat packet to all connected clients."""
+        """Broadcast frame synchronization packet to all connected clients."""
         if not self.host_running or not self.connected_clients:
             return
 
         try:
-            packet_dict["timestamp"] = time.time()
-            # Clean convert any numpy types to native python types
+            if "timestamp" not in packet_dict:
+                packet_dict["timestamp"] = time.time()
+
+            # Clean convert numpy arrays, floats, integers
             cleaned = {}
             for k, v in packet_dict.items():
+                if hasattr(v, "tolist"):
+                    v = v.tolist()
                 if isinstance(v, (np.floating, float)):
-                    cleaned[k] = float(v)
+                    cleaned[k] = round(float(v), 3)
                 elif isinstance(v, (np.integer, int)):
                     cleaned[k] = int(v)
                 elif isinstance(v, (list, tuple)):
                     cleaned[k] = [
                         int(x) if isinstance(x, (np.integer, int))
-                        else float(x) if isinstance(x, (np.floating, float))
+                        else round(float(x), 3) if isinstance(x, (np.floating, float))
                         else x for x in v
                     ]
                 else:
@@ -263,13 +316,16 @@ class SyncManager:
                 for client in self.connected_clients:
                     try:
                         client.sendall(raw_msg)
+                    except (BlockingIOError, socket.error):
+                        # Non-blocking buffer full - skip frame to prevent render stutter
+                        pass
                     except Exception:
                         dead.append(client)
                 for d in dead:
                     if d in self.connected_clients:
                         self.connected_clients.remove(d)
                 self.client_count = len(self.connected_clients)
-        except Exception as e:
+        except Exception:
             pass
 
     def start_client_search(self):
@@ -341,9 +397,13 @@ class SyncManager:
         return hosts
 
     def connect_to_host(self, host_entry):
+        self.role = ROLE_CLIENT
+        self.client_running = True
         threading.Thread(target=self._client_connect_worker, args=(host_entry,), daemon=True).start()
 
     def _client_connect_worker(self, host_entry):
+        self.role = ROLE_CLIENT
+        self.client_running = True
         self.client_status = f"Connecting to {host_entry['name']}..."
         self.disconnect_client()
 
@@ -369,6 +429,10 @@ class SyncManager:
                 ip = host_entry.get("address")
                 port = host_entry.get("port", self.tcp_port)
                 sock.connect((ip, port))
+                try:
+                    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                except Exception:
+                    pass
             except Exception as e:
                 self.client_status = f"Network Error: {str(e)[:30]}"
                 if sock:
@@ -384,9 +448,20 @@ class SyncManager:
 
     def _client_reader_worker(self):
         buf = b""
+        last_ping_time = time.time()
         while self.client_running and self.client_sock:
             try:
-                data = self.client_sock.recv(2048)
+                # Periodic Ping to Host for exact RTT calculation
+                now = time.time()
+                if now - last_ping_time >= 1.5:
+                    last_ping_time = now
+                    try:
+                        ping_msg = json.dumps({"type": "PING", "t": now}).encode("utf-8") + b"\n"
+                        self.client_sock.sendall(ping_msg)
+                    except Exception:
+                        pass
+
+                data = self.client_sock.recv(4096)
                 if not data:
                     break
                 buf += data
@@ -394,11 +469,16 @@ class SyncManager:
                     line, buf = buf.split(b"\n", 1)
                     if line.strip():
                         packet = json.loads(line.decode("utf-8"))
-                        if "timestamp" in packet:
-                            now = time.time()
-                            self.client_latency_ms = max(0.0, (now - packet["timestamp"]) * 1000)
-                        with self.lock:
-                            self.incoming_beat_queue.append(packet)
+                        if packet.get("type") == "PONG":
+                            recv_t = time.time()
+                            sent_t = packet.get("t", recv_t)
+                            self.client_latency_ms = max(0.5, (recv_t - sent_t) * 500)
+                        else:
+                            with self.lock:
+                                # Bound queue so client always tracks live host frame
+                                if len(self.incoming_beat_queue) > 6:
+                                    self.incoming_beat_queue = self.incoming_beat_queue[-3:]
+                                self.incoming_beat_queue.append(packet)
             except Exception:
                 break
 

@@ -161,16 +161,17 @@ class HUD:
         self.btn_style = pygame.Rect(panel_x + 30 + bw * 2, by, bw, 32)
         self.btn_device = pygame.Rect(panel_x + 40 + bw * 3, by, bw, 32)
 
-        # Button row 2 (Displays, Dual FX, Sync Panel, Crazy Mode, Safe Mode)
-        bw2 = (panel_w - 60) // 5
+        # Button row 2 (Displays, Dual FX, Sync Panel, Crazy Mode, Razer RGB, Safe Mode)
+        bw2 = (panel_w - 70) // 6
         by2 = by + 38
         self.btn_displays = pygame.Rect(panel_x + 10, by2, bw2, 32)
         self.btn_dualfx = pygame.Rect(panel_x + 20 + bw2, by2, bw2, 32)
         self.btn_sync = pygame.Rect(panel_x + 30 + bw2 * 2, by2, bw2, 32)
         self.btn_overdrive = pygame.Rect(panel_x + 40 + bw2 * 3, by2, bw2, 32)
-        self.btn_safe = pygame.Rect(panel_x + 50 + bw2 * 4, by2, bw2, 32)
+        self.btn_razer = pygame.Rect(panel_x + 50 + bw2 * 4, by2, bw2, 32)
+        self.btn_safe = pygame.Rect(panel_x + 60 + bw2 * 5, by2, bw2, 32)
 
-    def handle_mouse_down(self, pos, audio_mgr, visualizer, display_mgr, sync_mgr, on_display_change):
+    def handle_mouse_down(self, pos, audio_mgr, visualizer, display_mgr, sync_mgr, on_display_change, razer_mgr=None):
         self.notify_interaction()
 
         # Warning Dialog
@@ -299,6 +300,10 @@ class HUD:
             visualizer.toggle_overdrive()
             audio_mgr.set_overdrive(visualizer.overdrive_mode)
             return True
+        elif self.btn_razer.collidepoint(pos):
+            if razer_mgr is not None:
+                razer_mgr.toggle_enabled()
+            return True
         elif self.btn_safe.collidepoint(pos):
             visualizer.toggle_safe_mode()
             audio_mgr.set_overdrive(visualizer.overdrive_mode)
@@ -339,7 +344,7 @@ class HUD:
         elif self.alpha > target_alpha:
             self.alpha = max(0.0, self.alpha - HUD_FADE_SPEED * 255.0 * dt)
 
-    def render(self, screen, audio_mgr, visualizer, display_mgr, sync_mgr, audio_state, is_dual):
+    def render(self, screen, audio_mgr, visualizer, display_mgr, sync_mgr, audio_state, is_dual, razer_mgr=None):
         if not self.warning_dismissed:
             self._render_warning_dialog(screen)
             return
@@ -373,7 +378,10 @@ class HUD:
         # Audio source tag & Input/AGC Diagnostic badge
         raw_p = audio_state.get("raw_peak", 0.0)
         agc_g = audio_state.get("agc_gain", 1.0)
-        diag_str = f"In: {int(raw_p * 100)}% (AGC: {agc_g:.1f}x)"
+        rz_status = ""
+        if razer_mgr and razer_mgr.device_count > 0:
+            rz_status = f" | 🐍 Razer: {razer_mgr.device_count}" if razer_mgr.enabled else " | 🐍 Razer: Off"
+        diag_str = f"In: {int(raw_p * 100)}% (AGC: {agc_g:.1f}x){rz_status}"
 
         if sync_mgr.role == ROLE_CLIENT:
             lat = sync_mgr.client_latency_ms
@@ -511,12 +519,24 @@ class HUD:
         crazy_border = (255, 65, 45) if visualizer.overdrive_mode else (140, 70, 60)
         self._render_button(hud_surf, self.btn_overdrive, crazy_tag, crazy_bg, crazy_border, alpha_int)
 
+        # Razer Chroma Hardware RGB Button
+        if razer_mgr and razer_mgr.device_count > 0:
+            rz_count = razer_mgr.device_count
+            rz_tag = f"🐍 Razer: ON ({rz_count})" if razer_mgr.enabled else f"🐍 Razer: OFF ({rz_count})"
+            rz_bg = (10, 60, 25) if razer_mgr.enabled else (30, 35, 55)
+            rz_border = (0, 255, 120) if razer_mgr.enabled else (70, 100, 80)
+        else:
+            rz_tag = "🐍 Razer: N/A"
+            rz_bg = (25, 28, 40)
+            rz_border = (60, 70, 85)
+        self._render_button(hud_surf, self.btn_razer, rz_tag, rz_bg, rz_border, alpha_int)
+
         safe_tag = "Safe: ON" if visualizer.safe_mode else "Safe: OFF"
         safe_bg = (20, 60, 40) if visualizer.safe_mode else (30, 35, 55)
         self._render_button(hud_surf, self.btn_safe, safe_tag, safe_bg, (100, 255, 150), alpha_int)
 
         # Hotkey Footer
-        hints = "Hotkeys: [ESC] Exit  [X] 🔥 CRAZY STROBE  [F/F11] Displays  [B] Dual FX  [N] Sync  [M] Mode  [P] Palette  [S] Safe  [H] Hide"
+        hints = "Hotkeys: [ESC] Exit  [X] 🔥 CRAZY  [C] 🐍 Razer  [F/F11] Displays  [B] Dual FX  [N] Sync  [M] Mode  [P] Palette  [S] Safe  [H] Hide"
         hint_surf = self.font_small.render(hints, True, (140, 145, 165))
         hud_surf.blit(hint_surf, (panel.x + (panel.width - hint_surf.get_width()) // 2, panel.y + panel.height - 24))
 

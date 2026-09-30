@@ -22,6 +22,7 @@ from visualizer import VisualizerEngine
 from hud import HUD
 from display_manager import DisplayManager
 from sync_manager import SyncManager, ROLE_STANDALONE, ROLE_HOST, ROLE_CLIENT
+from razer_chroma import RazerChromaManager
 
 
 class BeatStrobeApp:
@@ -40,6 +41,7 @@ class BeatStrobeApp:
         self.visualizer = VisualizerEngine(self.screen_w, self.screen_h)
         self.hud = HUD(self.screen_w, self.screen_h)
         self.sync_mgr = SyncManager()
+        self.razer_mgr = RazerChromaManager()
 
         # Engage Crazy Overdrive Mode by default for maximum strobe intensity!
         self.audio_mgr.set_overdrive(True)
@@ -142,6 +144,9 @@ class BeatStrobeApp:
                             # Toggle Crazy Overdrive Mode!
                             self.visualizer.toggle_overdrive()
                             self.audio_mgr.set_overdrive(self.visualizer.overdrive_mode)
+                        elif event.key == pygame.K_c:
+                            # Toggle Razer Chroma Peripheral Lighting
+                            self.razer_mgr.toggle_enabled()
                         elif event.key == pygame.K_n:
                             self.hud.toggle_sync_modal()
                         elif event.key in (pygame.K_f, pygame.K_F11) or (event.key == pygame.K_RETURN and (event.mod & pygame.KMOD_ALT)):
@@ -195,6 +200,7 @@ class BeatStrobeApp:
                                 self.display_mgr,
                                 self.sync_mgr,
                                 self.on_display_mode_change,
+                                self.razer_mgr,
                             )
                             if not consumed and is_double and not self.hud.show_sync_modal:
                                 self.cycle_display_mode()
@@ -262,7 +268,13 @@ class BeatStrobeApp:
                     self.screen, audio_state, self.display_mgr.monitors, self.is_dual, is_client_sync=is_client
                 )
 
-                # 5. Broadcast to connected clients (Host only)
+                # 5. Razer Chroma Peripheral Hardware Sync (Keyboard & Mouse)
+                self.razer_mgr.set_colors(
+                    self.visualizer.last_render_rgb_0,
+                    self.visualizer.last_render_rgb_1,
+                )
+
+                # 6. Broadcast to connected clients (Host only)
                 if is_host:
                     is_kick = audio_state.get("is_kick", False)
                     is_snare = audio_state.get("is_snare", False)
@@ -276,7 +288,7 @@ class BeatStrobeApp:
                         packet = self.visualizer.get_sync_packet(audio_state, is_beat_event=has_beat)
                         self.sync_mgr.broadcast_beat(packet)
 
-                # 5. Render HUD overlay
+                # 7. Render HUD overlay
                 self.hud.render(
                     self.screen,
                     self.audio_mgr,
@@ -285,13 +297,15 @@ class BeatStrobeApp:
                     self.sync_mgr,
                     audio_state,
                     self.is_dual,
+                    self.razer_mgr,
                 )
 
-                # 6. Display swap & frame cap
+                # 8. Display swap & frame cap
                 pygame.display.flip()
                 self.clock.tick(FPS_CAP)
 
         finally:
+            self.razer_mgr.stop()
             self.audio_mgr.stop()
             self.sync_mgr.stop()
             pygame.quit()

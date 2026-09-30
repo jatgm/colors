@@ -80,12 +80,29 @@ The program automatically detects all connected monitors (e.g. two 1920x1080 mon
 
 ---
 
+## 🐍 Razer Chroma Hardware RGB Lighting (Hotkey `C`)
+
+Beat Strobe connects directly to your connected **Razer Keyboards and Mice** to flash and strobe their RGB lighting in real-time synchronization with your screen!
+
+- **Zero-Dependency Native Control**: Communicates directly through Windows native `hid.dll` and `setupapi.dll` using custom 90-byte Razer HID feature reports. **No Synapse installation or third-party SDK required!**
+- **Supported Hardware**:
+  - **Keyboards**: Razer Ornata V2, BlackWidow series, Huntsman series, Cynosa, DeathStalker, etc.
+  - **Mice**: Razer Viper series, DeathAdder series, Basilisk series, Cobra, Naga, etc.
+  - **Accessories**: Firefly mousepads, Chroma headsets, and ARGB controllers.
+- **Dual-Monitor Channel Splitting**:
+  - In **Dual Synced** mode, both your keyboard and mouse strobe the exact same colors as your screens.
+  - In **Ping-Pong Alternating** or **Complementary Contrast** modes, your **keyboard maps to the Left monitor** and your **mouse maps to the Right monitor**—creating an astonishing physical light show on your desk where beats bounce between your monitors, keyboard, and mouse!
+- **Asynchronous <1ms Sub-Millisecond USB Dispatch**: Non-blocking background worker thread guarantees zero frame drops or lag on your 120 FPS screen strobing.
+
+---
+
 ## 🎮 Controls & Shortcuts
 
 | Key | Action | Description |
 | :--- | :--- | :--- |
 | **`ESC`** | **Exit / Close Modal** | Closes active modal or exits the application safely. |
 | **`X`** | **🔥 Toggle CRAZY MODE** | Instantly toggles Crazy Overdrive strobe on/off. |
+| **`C`** | **🐍 Toggle Razer Chroma** | Toggles hardware RGB lighting sync for Razer keyboards & mice. |
 | **`N`** | **Bluetooth Sync Modal** | Opens the Multi-Computer Host & Client Bluetooth panel. |
 | **`F`** or **`F11`** | **Display Mode** | Cycles: *Dual Monitor Fullscreen (3840x1080)* $\to$ *Monitor 1* $\to$ *Monitor 2* $\to$ *Windowed*. |
 | **`B`** or **`2`** | **Dual FX Scheme** | Cycles: *Dual Synced* $\to$ *Ping-Pong Alternating* $\to$ *Complementary Contrast* $\to$ *Panoramic*. |
@@ -100,3 +117,4 @@ The program automatically detects all connected monitors (e.g. two 1920x1080 mon
 | **`[` / `]`** or **`PgUp` / `PgDn`** | **Pre-Amp Boost** | Adjusts input AGC gain multiplier (0.5x to 8.0x) for soft/loud audio sources. |
 | **`→` / `←`** | **Decay Speed** | Adjusts how fast flashes fade out (snappy strobe vs lingering rave glow). |
 | **`SPACE`** | **Manual Flash** | Forces an instant kick beat flash. |
+

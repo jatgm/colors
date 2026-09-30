@@ -12,8 +12,9 @@ import select
 import threading
 import subprocess
 import re
+import numpy as np
 
-# Ports and channels
+# Default ports and channels
 BT_RFCOMM_CHANNEL = 4
 TCP_PORT = 42424
 UDP_BEACON_PORT = 42425
@@ -63,7 +64,7 @@ class BluetoothScanner:
                             "mac": formatted_mac,
                             "type": "Bluetooth",
                         })
-        except Exception as e:
+        except Exception:
             pass
 
         with self.lock:
@@ -81,6 +82,11 @@ class SyncManager:
     def __init__(self):
         self.role = ROLE_STANDALONE
 
+        # Ports and channels
+        self.bt_channel = BT_RFCOMM_CHANNEL
+        self.tcp_port = TCP_PORT
+        self.udp_beacon_port = UDP_BEACON_PORT
+
         # Local system info
         self.hostname = socket.gethostname()
         try:
@@ -92,14 +98,14 @@ class SyncManager:
 
         # Scanner & Auto-Discovery
         self.bt_scanner = BluetoothScanner()
-        self.discovered_hosts = []  # List of dicts: {'name', 'type', 'address', 'port'}
+        self.discovered_hosts = []
         self.lock = threading.Lock()
 
         # Host state
         self.host_running = False
         self.host_bt_sock = None
         self.host_tcp_sock = None
-        self.connected_clients = []  # List of client socket objects
+        self.connected_clients = []
         self.client_count = 0
 
         # Client state
@@ -109,10 +115,8 @@ class SyncManager:
         self.client_connected_host = None
         self.client_latency_ms = 0.0
 
-        # Received remote beat state (consumed by main loop)
+        # Received remote beat state
         self.incoming_beat_queue = []
-
-        # Background threads
         self.threads = []
 
     def _detect_local_bt_mac(self):
@@ -124,7 +128,8 @@ class SyncManager:
             s.close()
             return mac
         except Exception:
-            return "No Bluetooth Radio"
+            # Try without channel bind or query hostname
+            return "Bluetooth Available"
 
     def set_role(self, new_role):
         """Switch sync role between Standalone, Host, and Client."""
@@ -144,27 +149,39 @@ class SyncManager:
         self.connected_clients = []
         self.client_count = 0
 
-        # 1. Start Bluetooth RFCOMM Server
+        # 1. Start Bluetooth RFCOMM Server (tries primary channel, then fallbacks)
         try:
             self.host_bt_sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
-            self.host_bt_sock.bind((socket.BDADDR_ANY, BT_RFCOMM_CHANNEL))
-            self.host_bt_sock.listen(5)
-            t_bt = threading.Thread(target=self._host_bt_accept_worker, daemon=True)
-            t_bt.start()
-            self.threads.append(t_bt)
-        except Exception as e:
+            bound = False
+            for ch in [BT_RFCOMM_CHANNEL, 1, 2, 3, 5, 6, 7]:
+                try:
+                    self.host_bt_sock.bind((socket.BDADDR_ANY, ch))
+                    self.bt_channel = ch
+                    bound = True
+                    break
+                except Exception:
+                    continue
+            if bound:
+                self.host_bt_sock.listen(5)
+                t_bt = threading.Thread(target=self._host_bt_accept_worker, daemon=True)
+                t_bt.start()
+                self.threads.append(t_bt)
+            else:
+                self.host_bt_sock.close()
+                self.host_bt_sock = None
+        except Exception:
             self.host_bt_sock = None
 
         # 2. Start TCP Server (for LAN and fallback)
         try:
             self.host_tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.host_tcp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.host_tcp_sock.bind(("0.0.0.0", TCP_PORT))
+            self.host_tcp_sock.bind(("0.0.0.0", self.tcp_port))
             self.host_tcp_sock.listen(5)
             t_tcp = threading.Thread(target=self._host_tcp_accept_worker, daemon=True)
             t_tcp.start()
             self.threads.append(t_tcp)
-        except Exception as e:
+        except Exception:
             self.host_tcp_sock = None
 
         # 3. Start UDP Beacon Broadcaster
@@ -195,19 +212,22 @@ class SyncManager:
     def _host_beacon_worker(self):
         """Periodically broadcast UDP discovery packets on local subnet."""
         udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        beacon_data = json.dumps({
-            "type": "BEAT_STROBE_HOST",
-            "hostname": self.hostname,
-            "bt_mac": self.local_bt_mac,
-            "ip": self.local_ip,
-            "port": TCP_PORT,
-            "rfcomm": BT_RFCOMM_CHANNEL,
-        }).encode("utf-8")
+        try:
+            udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        except Exception:
+            pass
 
         while self.host_running:
             try:
-                udp_sock.sendto(beacon_data, ("<broadcast>", UDP_BEACON_PORT))
+                beacon_data = json.dumps({
+                    "type": "BEAT_STROBE_HOST",
+                    "hostname": self.hostname,
+                    "bt_mac": self.local_bt_mac,
+                    "ip": self.local_ip,
+                    "port": self.tcp_port,
+                    "rfcomm": self.bt_channel,
+                }).encode("utf-8")
+                udp_sock.sendto(beacon_data, ("<broadcast>", self.udp_beacon_port))
             except Exception:
                 pass
             time.sleep(1.5)
@@ -218,20 +238,39 @@ class SyncManager:
         if not self.host_running or not self.connected_clients:
             return
 
-        packet_dict["timestamp"] = time.time()
-        raw_msg = json.dumps(packet_dict).encode("utf-8") + b"\n"
+        try:
+            packet_dict["timestamp"] = time.time()
+            # Clean convert any numpy types to native python types
+            cleaned = {}
+            for k, v in packet_dict.items():
+                if isinstance(v, (np.floating, float)):
+                    cleaned[k] = float(v)
+                elif isinstance(v, (np.integer, int)):
+                    cleaned[k] = int(v)
+                elif isinstance(v, (list, tuple)):
+                    cleaned[k] = [
+                        int(x) if isinstance(x, (np.integer, int))
+                        else float(x) if isinstance(x, (np.floating, float))
+                        else x for x in v
+                    ]
+                else:
+                    cleaned[k] = v
 
-        dead = []
-        with self.lock:
-            for client in self.connected_clients:
-                try:
-                    client.sendall(raw_msg)
-                except Exception:
-                    dead.append(client)
-            for d in dead:
-                if d in self.connected_clients:
-                    self.connected_clients.remove(d)
-            self.client_count = len(self.connected_clients)
+            raw_msg = json.dumps(cleaned).encode("utf-8") + b"\n"
+
+            dead = []
+            with self.lock:
+                for client in self.connected_clients:
+                    try:
+                        client.sendall(raw_msg)
+                    except Exception:
+                        dead.append(client)
+                for d in dead:
+                    if d in self.connected_clients:
+                        self.connected_clients.remove(d)
+                self.client_count = len(self.connected_clients)
+        except Exception as e:
+            pass
 
     def start_client_search(self):
         """Start searching for Bluetooth devices and LAN Host beacons."""
@@ -240,10 +279,8 @@ class SyncManager:
         self.client_status = "Searching for Hosts..."
         self.discovered_hosts = []
 
-        # Scan Bluetooth devices
         self.bt_scanner.start_scan()
 
-        # Listen for UDP beacons
         t_listener = threading.Thread(target=self._client_beacon_listener, daemon=True)
         t_listener.start()
         self.threads.append(t_listener)
@@ -253,7 +290,7 @@ class SyncManager:
         udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             udp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            udp.bind(("", UDP_BEACON_PORT))
+            udp.bind(("", self.udp_beacon_port))
             udp.settimeout(1.0)
         except Exception:
             return
@@ -267,8 +304,8 @@ class SyncManager:
                         "name": msg.get("hostname", "Host PC"),
                         "bt_mac": msg.get("bt_mac", ""),
                         "ip": addr[0],
-                        "port": msg.get("port", TCP_PORT),
-                        "rfcomm": msg.get("rfcomm", BT_RFCOMM_CHANNEL),
+                        "port": msg.get("port", self.tcp_port),
+                        "rfcomm": msg.get("rfcomm", self.bt_channel),
                         "type": "LAN / Bluetooth",
                     }
                     with self.lock:
@@ -283,7 +320,6 @@ class SyncManager:
     def get_all_discovered_hosts(self):
         """Return combined list of discovered Bluetooth devices and LAN hosts."""
         hosts = []
-        # LAN hosts
         with self.lock:
             for h in self.discovered_hosts:
                 hosts.append({
@@ -293,20 +329,18 @@ class SyncManager:
                     "bt_mac": h["bt_mac"],
                     "type": "Network Host",
                 })
-        # Bluetooth devices
         bt_devs = self.bt_scanner.get_devices()
         for b in bt_devs:
             hosts.append({
                 "name": f"🔵 {b['name']}",
                 "address": b["mac"],
-                "port": BT_RFCOMM_CHANNEL,
+                "port": self.bt_channel,
                 "bt_mac": b["mac"],
                 "type": "Bluetooth Device",
             })
         return hosts
 
     def connect_to_host(self, host_entry):
-        """Connect to a selected host (Bluetooth or Network)."""
         threading.Thread(target=self._client_connect_worker, args=(host_entry,), daemon=True).start()
 
     def _client_connect_worker(self, host_entry):
@@ -317,12 +351,11 @@ class SyncManager:
         sock = None
 
         if "Bluetooth" in addr_type:
-            # Connect via Bluetooth RFCOMM
             try:
                 sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
                 sock.settimeout(8.0)
                 mac = host_entry.get("bt_mac") or host_entry.get("address")
-                channel = host_entry.get("port", BT_RFCOMM_CHANNEL)
+                channel = host_entry.get("port", self.bt_channel)
                 sock.connect((mac, channel))
             except Exception as e:
                 self.client_status = f"Bluetooth Error: {str(e)[:30]}"
@@ -330,12 +363,11 @@ class SyncManager:
                     sock.close()
                 return
         else:
-            # Connect via TCP
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(6.0)
                 ip = host_entry.get("address")
-                port = host_entry.get("port", TCP_PORT)
+                port = host_entry.get("port", self.tcp_port)
                 sock.connect((ip, port))
             except Exception as e:
                 self.client_status = f"Network Error: {str(e)[:30]}"
@@ -348,11 +380,9 @@ class SyncManager:
         self.client_connected_host = host_entry["name"]
         self.client_status = f"Connected to {host_entry['name']}"
 
-        # Start packet reader thread
         threading.Thread(target=self._client_reader_worker, daemon=True).start()
 
     def _client_reader_worker(self):
-        """Read incoming beat packets from host."""
         buf = b""
         while self.client_running and self.client_sock:
             try:
@@ -364,7 +394,6 @@ class SyncManager:
                     line, buf = buf.split(b"\n", 1)
                     if line.strip():
                         packet = json.loads(line.decode("utf-8"))
-                        # Calculate latency if timestamp present
                         if "timestamp" in packet:
                             now = time.time()
                             self.client_latency_ms = max(0.0, (now - packet["timestamp"]) * 1000)
@@ -377,7 +406,6 @@ class SyncManager:
         self.disconnect_client()
 
     def get_incoming_beats(self):
-        """Retrieve and clear queued incoming beat packets for client render loop."""
         with self.lock:
             beats = list(self.incoming_beat_queue)
             self.incoming_beat_queue.clear()

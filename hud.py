@@ -15,7 +15,13 @@ from config import (
     MIN_DECAY_RATE,
     MAX_DECAY_RATE,
 )
-from sync_manager import ROLE_STANDALONE, ROLE_HOST, ROLE_CLIENT
+from sync_manager import (
+    ROLE_STANDALONE,
+    ROLE_HOST,
+    ROLE_CLIENT,
+    BT_RFCOMM_CHANNEL,
+    TCP_PORT,
+)
 
 
 class HUD:
@@ -465,8 +471,8 @@ class HUD:
 
             info_lines = [
                 f"Computer Hostname:  {sync_mgr.hostname}",
-                f"Bluetooth Address:  {sync_mgr.local_bt_mac} (RFCOMM Channel {BT_RFCOMM_CHANNEL})",
-                f"Local Network IP:   {sync_mgr.local_ip}:{TCP_PORT}",
+                f"Bluetooth Address:  {sync_mgr.local_bt_mac} (RFCOMM Channel {sync_mgr.bt_channel})",
+                f"Local Network IP:   {sync_mgr.local_ip}:{sync_mgr.tcp_port}",
                 "",
                 f"⚡ Connected Synced Clients: {sync_mgr.client_count} computer(s)",
                 "",

@@ -1,7 +1,7 @@
 """
 Modern cyberpunk HUD (Heads-Up Display) and interactive UI.
 Supports dynamic multi-monitor positioning, spectrum visualizer,
-controls, and a full-featured Multi-Computer Bluetooth/Network Sync Panel.
+controls, Bluetooth device discovery, and Direct Manual IP/MAC Connection.
 """
 
 import time
@@ -47,6 +47,10 @@ class HUD:
         self.warning_dismissed = False
         self.show_sync_modal = False
 
+        # Direct host manual input
+        self.entering_custom_host = False
+        self.custom_host_input = ""
+
         # Active dragging state for sliders
         self.dragging_slider = None
 
@@ -82,6 +86,53 @@ class HUD:
     def toggle_sync_modal(self):
         self.show_sync_modal = not self.show_sync_modal
         self.notify_interaction()
+
+    def handle_text_input(self, event, sync_mgr):
+        """Handle typing when entering manual IP or Bluetooth MAC."""
+        if not self.show_sync_modal or not self.entering_custom_host:
+            return False
+
+        if event.key == pygame.K_ESCAPE:
+            self.entering_custom_host = False
+            return True
+        elif event.key == pygame.K_BACKSPACE:
+            self.custom_host_input = self.custom_host_input[:-1]
+            return True
+        elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+            self._submit_custom_host(sync_mgr)
+            return True
+        elif event.unicode and len(self.custom_host_input) < 40:
+            if event.unicode.isprintable():
+                self.custom_host_input += event.unicode
+                return True
+        return False
+
+    def _submit_custom_host(self, sync_mgr):
+        raw = self.custom_host_input.strip()
+        if not raw:
+            self.entering_custom_host = False
+            return
+
+        is_bt = (":" in raw and len(raw) == 17) or ("-" in raw and len(raw) == 17)
+        if is_bt:
+            formatted_mac = raw.replace("-", ":").upper()
+            host_entry = {
+                "name": f"Bluetooth ({formatted_mac})",
+                "address": formatted_mac,
+                "bt_mac": formatted_mac,
+                "port": sync_mgr.bt_channel,
+                "type": "Bluetooth Device",
+            }
+        else:
+            host_entry = {
+                "name": f"Network Host ({raw})",
+                "address": raw,
+                "port": sync_mgr.tcp_port,
+                "bt_mac": "",
+                "type": "Network Host",
+            }
+        sync_mgr.connect_to_host(host_entry)
+        self.entering_custom_host = False
 
     def _build_layout(self):
         mon = self.active_mon_rect
@@ -143,13 +194,12 @@ class HUD:
             mx = mon.x + (mon.width - modal_w) // 2
             my = mon.y + (mon.height - modal_h) // 2
 
-            # Close button
             btn_close = pygame.Rect(mx + modal_w - 90, my + 15, 75, 28)
             if btn_close.collidepoint(pos):
                 self.show_sync_modal = False
+                self.entering_custom_host = False
                 return True
 
-            # Tab buttons: Standalone, Host, Client
             tab_w = (modal_w - 60) // 3
             tab_y = my + 60
             tab_stand = pygame.Rect(mx + 20, tab_y, tab_w, 34)
@@ -158,33 +208,43 @@ class HUD:
 
             if tab_stand.collidepoint(pos):
                 sync_mgr.set_role(ROLE_STANDALONE)
+                self.entering_custom_host = False
                 return True
             elif tab_host.collidepoint(pos):
                 sync_mgr.set_role(ROLE_HOST)
+                self.entering_custom_host = False
                 return True
             elif tab_client.collidepoint(pos):
                 sync_mgr.set_role(ROLE_CLIENT)
                 return True
 
-            # In Client Tab: Click on discovered host to connect
             if sync_mgr.role == ROLE_CLIENT:
                 for r_item, host_data in self.host_item_rects:
                     if r_item.collidepoint(pos):
                         sync_mgr.connect_to_host(host_data)
                         return True
 
-                # Disconnect button if connected
                 if sync_mgr.client_sock:
                     btn_disc = pygame.Rect(mx + modal_w - 140, my + 380, 110, 32)
                     if btn_disc.collidepoint(pos):
                         sync_mgr.disconnect_client()
                         return True
+                else:
+                    btn_rescan = pygame.Rect(mx + 30, my + 380, 130, 32)
+                    if btn_rescan.collidepoint(pos):
+                        sync_mgr.start_client_search()
+                        return True
 
-                # Rescan button
-                btn_rescan = pygame.Rect(mx + 30, my + 380, 140, 32)
-                if btn_rescan.collidepoint(pos):
-                    sync_mgr.start_client_search()
-                    return True
+                    btn_custom = pygame.Rect(mx + 175, my + 380, 180, 32)
+                    if btn_custom.collidepoint(pos):
+                        self.entering_custom_host = not self.entering_custom_host
+                        return True
+
+                    if self.entering_custom_host:
+                        btn_submit = pygame.Rect(mx + modal_w - 140, my + 380, 110, 32)
+                        if btn_submit.collidepoint(pos):
+                            self._submit_custom_host(sync_mgr)
+                            return True
 
             return True
 
@@ -379,7 +439,6 @@ class HUD:
         dual_txt = visualizer.dual_scheme if is_dual else "N/A (Single)"
         self._render_button(hud_surf, self.btn_dualfx, f"Dual FX: {dual_txt}", (45, 35, 65), (220, 120, 255), alpha_int)
 
-        # Sync button with current role status
         if sync_mgr.role == ROLE_HOST:
             sync_label = f"Sync: [Host ({sync_mgr.client_count})]"
             sync_bg = (40, 25, 60)
@@ -451,7 +510,7 @@ class HUD:
         pygame.draw.rect(overlay, (14, 17, 28), content_box, border_radius=10)
         pygame.draw.rect(overlay, (45, 50, 70), content_box, width=1, border_radius=10)
 
-        cy = content_box.y + 20
+        cy = content_box.y + 18
 
         if sync_mgr.role == ROLE_STANDALONE:
             overlay.blit(self.font_main.render("Current Role: Standalone Computer", True, (255, 255, 255)), (content_box.x + 25, cy))
@@ -476,14 +535,13 @@ class HUD:
                 "",
                 f"⚡ Connected Synced Clients: {sync_mgr.client_count} computer(s)",
                 "",
-                "Instructions for other computers:",
-                " 1. Download/open Beat Strobe on the other computer(s).",
-                " 2. Switch to 'Client' mode and search for this host.",
-                " 3. Click Connect to strobe all screens together in perfect unison!",
+                "How to connect other computers:",
+                f" • Via Bluetooth: Pair PCs in Windows or search for '{sync_mgr.hostname}' ({sync_mgr.local_bt_mac}).",
+                f" • Via Wi-Fi/LAN: Connect to the same router or enter IP '{sync_mgr.local_ip}'.",
             ]
             for i, line in enumerate(info_lines):
                 col = (255, 220, 100) if "Connected Synced" in line else (200, 205, 220)
-                overlay.blit(self.font_small.render(line, True, col), (content_box.x + 25, cy + 30 + i * 20))
+                overlay.blit(self.font_small.render(line, True, col), (content_box.x + 25, cy + 28 + i * 20))
 
         elif sync_mgr.role == ROLE_CLIENT:
             status_col = (100, 255, 150) if sync_mgr.client_sock else (255, 200, 50)
@@ -506,32 +564,50 @@ class HUD:
 
             else:
                 # Discovered Hosts List
-                overlay.blit(self.font_small.render("Discovered Hosts & Nearby Bluetooth Devices:", True, (160, 165, 185)), (content_box.x + 25, cy + 28))
+                overlay.blit(self.font_small.render("Discovered Hosts & Nearby Bluetooth Devices:", True, (160, 165, 185)), (content_box.x + 25, cy + 24))
 
                 discovered = sync_mgr.get_all_discovered_hosts()
-                item_y = cy + 52
+                item_y = cy + 46
 
                 if not discovered:
-                    overlay.blit(self.font_small.render("Searching for nearby Bluetooth hosts & network beacons...", True, (200, 180, 100)), (content_box.x + 35, item_y + 15))
+                    overlay.blit(self.font_small.render("Searching for nearby Bluetooth hosts & network beacons...", True, (200, 180, 100)), (content_box.x + 35, item_y + 12))
                 else:
-                    for idx, host_entry in enumerate(discovered[:5]):
-                        item_rect = pygame.Rect(content_box.x + 20, item_y, content_box.width - 40, 38)
+                    for idx, host_entry in enumerate(discovered[:4]):
+                        item_rect = pygame.Rect(content_box.x + 20, item_y, content_box.width - 40, 36)
                         pygame.draw.rect(overlay, (24, 28, 44), item_rect, border_radius=6)
                         pygame.draw.rect(overlay, (60, 70, 95), item_rect, width=1, border_radius=6)
 
                         name_surf = self.font_small.render(f"{host_entry['name']}", True, (255, 255, 255))
                         addr_surf = self.font_small.render(f"({host_entry['type']}: {host_entry['address']})", True, (140, 150, 180))
-                        overlay.blit(name_surf, (item_rect.x + 12, item_rect.y + 10))
-                        overlay.blit(addr_surf, (item_rect.x + 24 + name_surf.get_width(), item_rect.y + 10))
+                        overlay.blit(name_surf, (item_rect.x + 12, item_rect.y + 9))
+                        overlay.blit(addr_surf, (item_rect.x + 24 + name_surf.get_width(), item_rect.y + 9))
 
-                        btn_conn = pygame.Rect(item_rect.x + item_rect.width - 100, item_rect.y + 5, 88, 28)
+                        btn_conn = pygame.Rect(item_rect.x + item_rect.width - 95, item_rect.y + 4, 85, 28)
                         self._render_button(overlay, btn_conn, "Connect", (0, 140, 180), (0, 220, 255), 255)
                         self.host_item_rects.append((btn_conn, host_entry))
 
-                        item_y += 44
+                        item_y += 40
 
-                btn_rescan = pygame.Rect(content_box.x + 25, content_box.y + content_box.height - 48, 140, 32)
+                # Bottom Controls
+                btn_rescan = pygame.Rect(content_box.x + 20, content_box.y + content_box.height - 48, 120, 32)
                 self._render_button(overlay, btn_rescan, "🔄 Scan Again", (35, 45, 65), (100, 200, 255), 255)
+
+                if self.entering_custom_host:
+                    # Input box
+                    inp_rect = pygame.Rect(content_box.x + 150, content_box.y + content_box.height - 48, 280, 32)
+                    pygame.draw.rect(overlay, (10, 14, 24), inp_rect, border_radius=6)
+                    pygame.draw.rect(overlay, (0, 240, 255), inp_rect, width=2, border_radius=6)
+
+                    display_txt = self.custom_host_input or "Enter IP (e.g. 192.168.1.5) or BT MAC"
+                    txt_col = (255, 255, 255) if self.custom_host_input else (120, 130, 150)
+                    inp_surf = self.font_small.render(display_txt, True, txt_col)
+                    overlay.blit(inp_surf, (inp_rect.x + 10, inp_rect.y + 7))
+
+                    btn_sub = pygame.Rect(content_box.x + 440, content_box.y + content_box.height - 48, 100, 32)
+                    self._render_button(overlay, btn_sub, "Connect", (0, 160, 120), (0, 255, 180), 255)
+                else:
+                    btn_manual = pygame.Rect(content_box.x + 150, content_box.y + content_box.height - 48, 190, 32)
+                    self._render_button(overlay, btn_manual, "⌨ Enter Host IP / MAC", (35, 45, 65), (160, 180, 220), 255)
 
         screen.blit(overlay, (0, 0))
 

@@ -82,10 +82,15 @@ class BeatStrobeApp:
                     elif event.type == pygame.KEYDOWN:
                         self.hud.notify_interaction()
 
+                        # Text input in Sync Modal (IP / MAC typing)
+                        if self.hud.handle_text_input(event, self.sync_mgr):
+                            continue
+
                         # Modal Close Handlers
                         if self.hud.show_sync_modal:
                             if event.key in (pygame.K_ESCAPE, pygame.K_n):
                                 self.hud.show_sync_modal = False
+                                self.hud.entering_custom_host = False
                             continue
 
                         # Startup Warning Dialog Handling

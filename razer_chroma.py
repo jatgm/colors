@@ -228,6 +228,53 @@ class RazerChromaManager:
             else:
                 self.active_mode = "NONE"
 
+        if self.devices:
+            self._configure_devices()
+
+    def _configure_devices(self):
+        """Set all Razer devices to Driver Mode (0x03) and 100% hardware brightness (0xFF)."""
+        if not self.hid:
+            return
+        # 1. Driver Mode: class=0x00, id=0x04, size=0x02, args=[0x03, 0x00]
+        rep_mode = _create_razer_report(0x00, 0x04, 0x02, [0x03, 0x00])
+        buf_mode = bytearray(91)
+        buf_mode[1:] = rep_mode
+        cbuf_mode = (ctypes.c_char * 91).from_buffer(buf_mode)
+
+        # 2. Maximum Brightness: class=0x03, id=0x03, size=0x03, args=[0x00, 0x00, 0xFF]
+        rep_bright = _create_razer_report(0x03, 0x03, 0x03, [0x00, 0x00, 0xFF])
+        buf_bright = bytearray(91)
+        buf_bright[1:] = rep_bright
+        cbuf_bright = (ctypes.c_char * 91).from_buffer(buf_bright)
+
+        with self.lock:
+            devs = list(self.devices)
+
+        for dev in devs:
+            try:
+                self.hid.HidD_SetFeature(dev.handle, cbuf_mode, 91)
+                self.hid.HidD_SetFeature(dev.handle, cbuf_bright, 91)
+            except Exception:
+                pass
+
+    def _boost_peripheral_color(self, rgb):
+        """Boost contrast and minimum visibility floor for keycaps and light diffusers."""
+        r, g, b = rgb
+        max_c = max(r, g, b)
+        if max_c <= 0:
+            return (0, 0, 0)
+        # Apply perceptual boost: if color is soft, lift it so LEDs visibly illuminate
+        # If it's a hard beat (>180), keep full blast
+        if max_c < 65:
+            # Gentle ambient music lift (minimum 28-35 on dominant channel)
+            scale = max(1.2, min(2.5, 32.0 / max(1, max_c)))
+        else:
+            scale = 1.15
+        br = min(255, int(r * scale))
+        bg = min(255, int(g * scale))
+        bb = min(255, int(b * scale))
+        return (br, bg, bb)
+
     def set_colors(self, rgb_left, rgb_right=None):
         """Push target colors to Razer hardware (non-blocking)."""
         if not self.enabled or not self.devices:
@@ -264,18 +311,22 @@ class RazerChromaManager:
             if not devs or not self.enabled:
                 continue
 
+            # Boost colors for physical LED keycaps & lightbars
+            b_left = self._boost_peripheral_color(c_left)
+            b_right = self._boost_peripheral_color(c_right)
+
             # Build reports for left and right channels (NOSTORE volatile mode)
             # cmd 0x0F / 0x02: Extended matrix static color
-            args_left = bytearray([0x00, 0x00, 0x01, 0x00, 0x00, 0x01, c_left[0], c_left[1], c_left[2]])
+            args_left = bytearray([0x00, 0x00, 0x01, 0x00, 0x00, 0x01, b_left[0], b_left[1], b_left[2]])
             rep_left = _create_razer_report(0x0F, 0x02, 0x09, args_left)
             buf_left = bytearray(91)
             buf_left[1:] = rep_left
             cbuf_left = (ctypes.c_char * 91).from_buffer(buf_left)
 
-            if c_left == c_right:
+            if b_left == b_right:
                 cbuf_right = cbuf_left
             else:
-                args_right = bytearray([0x00, 0x00, 0x01, 0x00, 0x00, 0x01, c_right[0], c_right[1], c_right[2]])
+                args_right = bytearray([0x00, 0x00, 0x01, 0x00, 0x00, 0x01, b_right[0], b_right[1], b_right[2]])
                 rep_right = _create_razer_report(0x0F, 0x02, 0x09, args_right)
                 buf_right = bytearray(91)
                 buf_right[1:] = rep_right
@@ -293,7 +344,9 @@ class RazerChromaManager:
     def toggle_enabled(self):
         """Toggle Razer hardware lighting on/off."""
         self.enabled = not self.enabled
-        if not self.enabled:
+        if self.enabled:
+            self._configure_devices()
+        else:
             # Turn LEDs off (blackout)
             self.set_colors((0, 0, 0), (0, 0, 0))
         return self.enabled

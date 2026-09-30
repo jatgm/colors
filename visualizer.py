@@ -109,6 +109,11 @@ class VisualizerEngine:
         self.last_eff_intensity_0 = 0.0
         self.last_eff_intensity_1 = 0.0
 
+        # Peak hold timers to guarantee 100% full-brilliance rendering on beats
+        self.kick_hold_timer = 0.0
+        self.snare_hold_timer = 0.0
+        self.hihat_hold_timer = 0.0
+
     def resize(self, width, height):
         self.width = max(100, width)
         self.height = max(100, height)
@@ -315,6 +320,7 @@ class VisualizerEngine:
     def trigger_kick(self):
         """Trigger kick strobe flash & advance palette color with multi-pulse train."""
         self.kick_intensity = 1.0
+        self.kick_hold_timer = 0.038  # Guarantee full 100% peak brilliance for at least 38ms
         self.shockwave_radius = 0.0
         self.shockwave_active = True
 
@@ -357,18 +363,21 @@ class VisualizerEngine:
     def trigger_snare(self):
         """Trigger snare/clap accent flash."""
         self.snare_intensity = 1.0
+        self.snare_hold_timer = 0.030
         if self.overdrive_mode:
             self.burst_remaining = max(self.burst_remaining, 2)
 
     def trigger_hihat(self):
         """Trigger hi-hat rapid micro-sparkle strobe."""
         self.hihat_intensity = 1.0
+        self.hihat_hold_timer = 0.020
 
     def trigger_drop(self):
         """Trigger massive bass drop surge."""
         self.drop_intensity = 1.0
         self.kick_intensity = 1.0
         self.snare_intensity = 1.0
+        self.kick_hold_timer = 0.060
         self.burst_remaining = 5  # 5-pulse machine-gun blast
 
     def update(self, dt, audio_state):
@@ -393,18 +402,28 @@ class VisualizerEngine:
                     if self.burst_remaining <= 0:
                         self.burst_is_on = True
 
-        # Decay kick flash
-        decay_multiplier = 1.6 if self.overdrive_mode else 1.0
-        actual_decay = (self.decay_rate * decay_multiplier) * (0.5 if self.safe_mode or self.mode == MODE_SMOOTH_PULSE else 1.0)
+        # Decay kick flash with peak-hold (prevents flash from decaying before render)
+        if self.kick_hold_timer > 0:
+            self.kick_hold_timer -= dt
+        else:
+            decay_multiplier = 1.2 if self.overdrive_mode else 0.8
+            actual_decay = (self.decay_rate * decay_multiplier) * (0.5 if self.safe_mode or self.mode == MODE_SMOOTH_PULSE else 1.0)
+            self.kick_intensity = max(0.0, self.kick_intensity - actual_decay * dt)
+            self.kick_intensity_left = max(0.0, self.kick_intensity_left - actual_decay * dt)
+            self.kick_intensity_right = max(0.0, self.kick_intensity_right - actual_decay * dt)
 
-        self.kick_intensity = max(0.0, self.kick_intensity - actual_decay * dt)
-        self.kick_intensity_left = max(0.0, self.kick_intensity_left - actual_decay * dt)
-        self.kick_intensity_right = max(0.0, self.kick_intensity_right - actual_decay * dt)
+        # Decay snare and hi-hat with peak-hold
+        if self.snare_hold_timer > 0:
+            self.snare_hold_timer -= dt
+        else:
+            self.snare_intensity = max(0.0, self.snare_intensity - (self.decay_rate * 1.3) * dt)
 
-        # Decay snare and hi-hat
-        self.snare_intensity = max(0.0, self.snare_intensity - (actual_decay * 1.5) * dt)
-        self.hihat_intensity = max(0.0, self.hihat_intensity - (actual_decay * 2.2) * dt)
-        self.drop_intensity = max(0.0, self.drop_intensity - (actual_decay * 0.8) * dt)
+        if self.hihat_hold_timer > 0:
+            self.hihat_hold_timer -= dt
+        else:
+            self.hihat_intensity = max(0.0, self.hihat_intensity - (self.decay_rate * 1.8) * dt)
+
+        self.drop_intensity = max(0.0, self.drop_intensity - (self.decay_rate * 0.7) * dt)
 
         # Decay screen shake
         if self.shake_decay > 0:
@@ -424,7 +443,19 @@ class VisualizerEngine:
                 self.shockwave_active = False
 
     def _calc_color_and_intensity(self, base_col, intensity, audio_state):
-        """Calculate final RGB with extreme strobe contrast, burst chopping, and phosphor white flares."""
+        """Calculate final RGB with vibrant ambient music glow, extreme strobe contrast, burst chopping, and phosphor white flares."""
+        # Dynamic Ambient Music Floor & Idle Breathing Pulse
+        # Ensures screens and Razer peripherals are never a dead black void
+        music_energy = max(
+            audio_state.get("total_level", 0.0) * 0.75,
+            audio_state.get("bass_level", 0.0) * 0.85,
+            audio_state.get("mid_level", 0.0) * 0.55,
+        )
+        # Idle breathing glow: smooth 8-12% pulse so the user always sees it's active & listening
+        t_now = time.time()
+        idle_breath = 0.09 + 0.03 * math.sin(t_now * 2.2)
+        ambient_floor = max(idle_breath, min(0.32, music_energy * 0.50))
+
         # Strobe pulse gating (chopping for stroboscopic effect)
         chopped_intensity = intensity
         if (self.overdrive_mode or self.mode == MODE_STROBE_BLITZ) and not self.safe_mode:
@@ -432,37 +463,47 @@ class VisualizerEngine:
                 chopped_intensity = 0.0  # Instant blackout between burst micro-flashes!
 
         if self.safe_mode or self.mode == MODE_SMOOTH_PULSE:
-            base_floor = 0.18 + audio_state.get("bass_level", 0.0) * 0.15
-            eff_intensity = base_floor + chopped_intensity * 0.82
-            eff_intensity = math.sin(min(1.0, eff_intensity) * (math.pi / 2))
-        elif self.mode == MODE_HARD_STROBE or self.mode == MODE_MONOCHROME:
-            eff_intensity = max(0.0, min(1.0, chopped_intensity))
-        elif self.mode == MODE_SPECTRUM:
-            eff_intensity = max(0.1, min(1.0, 0.2 + audio_state.get("total_level", 0.0) * 0.4 + chopped_intensity * 0.7))
+            eff_intensity = math.sin(min(1.0, 0.20 + ambient_floor * 0.40 + chopped_intensity * 0.80) * (math.pi / 2))
         elif self.mode == MODE_PSYCHO_OVERDRIVE:
-            # Extreme high-contrast psycho overdrive: full power
-            eff_intensity = max(0.0, min(1.0, chopped_intensity * 1.2))
-        elif self.mode == MODE_MACHINE_GUN:
-            eff_intensity = max(0.0, min(1.0, chopped_intensity))
+            # Overdrive blast: high-energy flash atop live reactive ambient floor
+            if chopped_intensity > 0.01:
+                eff_intensity = min(1.0, ambient_floor * 0.35 + chopped_intensity * 1.15)
+            else:
+                eff_intensity = ambient_floor if self.burst_remaining <= 0 else 0.0
+        elif self.mode == MODE_HARD_STROBE:
+            # Classic concert strobe: deep contrast with subtle ambient floor
+            eff_intensity = max(idle_breath * 0.5, chopped_intensity)
+        elif self.mode == MODE_SPECTRUM:
+            eff_intensity = max(0.18, min(1.0, 0.22 + audio_state.get("total_level", 0.0) * 0.45 + chopped_intensity * 0.65))
         else:
-            eff_intensity = max(0.0, min(1.0, chopped_intensity))
+            eff_intensity = max(ambient_floor, chopped_intensity)
+
+        # Perceptual gamma scaling so colors stay vivid, luminous, and rich
+        gamma_intensity = min(1.0, eff_intensity ** 0.72)
 
         # Base RGB synthesis
         if self.mode == MODE_MONOCHROME:
-            val = int(255 * eff_intensity)
+            val = int(255 * gamma_intensity)
             r, g, b = val, val, val
         elif self.mode == MODE_SPECTRUM:
             bass = audio_state.get("bass_level", 0.0)
             mid = audio_state.get("mid_level", 0.0)
             high = audio_state.get("high_level", 0.0)
-            r = int(min(255, (bass * 240 + mid * 70) * (0.3 + eff_intensity * 0.7)))
-            g = int(min(255, (mid * 240 + high * 60) * (0.3 + eff_intensity * 0.7)))
-            b = int(min(255, (high * 240 + bass * 120) * (0.3 + eff_intensity * 0.7)))
+            r = int(min(255, (bass * 240 + mid * 80) * (0.35 + gamma_intensity * 0.65)))
+            g = int(min(255, (mid * 240 + high * 70) * (0.35 + gamma_intensity * 0.65)))
+            b = int(min(255, (high * 240 + bass * 130) * (0.35 + gamma_intensity * 0.65)))
         else:
             cr, cg, cb = base_col
-            r = int(cr * eff_intensity)
-            g = int(cg * eff_intensity)
-            b = int(cb * eff_intensity)
+            r = int(cr * gamma_intensity)
+            g = int(cg * gamma_intensity)
+            b = int(cb * gamma_intensity)
+
+            # On high-intensity beat peaks (>0.82), add phosphor white core brilliance
+            if gamma_intensity > 0.82 and not self.safe_mode:
+                white_flare = int(255 * (gamma_intensity - 0.82) / 0.18 * 0.45)
+                r = min(255, r + white_flare)
+                g = min(255, g + white_flare)
+                b = min(255, b + white_flare)
 
         # Snare Accent Flash
         if self.snare_intensity > 0.01:
@@ -480,7 +521,6 @@ class VisualizerEngine:
         # Hi-Hat Sparkle Strobe (High-frequency sizzle)
         if self.hihat_intensity > 0.01 and not self.safe_mode:
             hi_val = int(180 * self.hihat_intensity)
-            # Add cold cyan / white spark
             r = min(255, r + int(hi_val * 0.7))
             g = min(255, g + hi_val)
             b = min(255, b + hi_val)

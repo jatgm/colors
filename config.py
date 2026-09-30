@@ -111,16 +111,16 @@ PALETTES = {
 PALETTE_NAMES = list(PALETTES.keys())
 
 # Default Sensitivity & Decay values
-DEFAULT_SENSITIVITY = 1.4
+DEFAULT_SENSITIVITY = 1.6
 MIN_SENSITIVITY = 0.5
 MAX_SENSITIVITY = 3.5
 
-DEFAULT_DECAY_RATE = 28.0    # Snappier default strobe decay
+DEFAULT_DECAY_RATE = 16.0    # Balanced, luminous club strobe duration
 MIN_DECAY_RATE = 4.0
 MAX_DECAY_RATE = 80.0        # Ultra-sharp 1-frame blackout cutoffs
 
 # Pre-Amp Gain Multiplier (AGC Boost)
-DEFAULT_PREAMP_GAIN = 1.8
+DEFAULT_PREAMP_GAIN = 2.2
 MIN_PREAMP_GAIN = 0.5
 MAX_PREAMP_GAIN = 8.0
 

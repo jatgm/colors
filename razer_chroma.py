@@ -232,11 +232,12 @@ class RazerChromaManager:
             self._configure_devices()
 
     def _configure_devices(self):
-        """Set all Razer devices to Driver Mode (0x03) and 100% hardware brightness (0xFF)."""
+        """Set all Razer devices to Normal Mode (0x00) and 100% hardware brightness (0xFF)."""
         if not self.hid:
             return
-        # 1. Driver Mode: class=0x00, id=0x04, size=0x02, args=[0x03, 0x00]
-        rep_mode = _create_razer_report(0x00, 0x04, 0x02, [0x03, 0x00])
+        # 1. Normal Mode (0x00, 0x00): Ensures physical volume wheel and media keys (Play/Pause/Skip)
+        # function as native Windows system volume & media keys instead of scrolling
+        rep_mode = _create_razer_report(0x00, 0x04, 0x02, [0x00, 0x00])
         buf_mode = bytearray(91)
         buf_mode[1:] = rep_mode
         cbuf_mode = (ctypes.c_char * 91).from_buffer(buf_mode)
@@ -354,16 +355,21 @@ class RazerChromaManager:
     def stop(self):
         """Gracefully release hardware handles and stop worker thread."""
         self.running = False
-        # Fade out before closing
+        # Restore hardware Normal Mode (0x00) and fade out
         try:
             self.set_colors((0, 0, 0), (0, 0, 0))
-            time.sleep(0.05)
+            time.sleep(0.04)
         except Exception:
             pass
 
         with self.lock:
             for d in self.devices:
                 try:
+                    if self.hid:
+                        rep_mode = _create_razer_report(0x00, 0x04, 0x02, [0x00, 0x00])
+                        buf_mode = bytearray(91)
+                        buf_mode[1:] = rep_mode
+                        self.hid.HidD_SetFeature(d.handle, (ctypes.c_char * 91).from_buffer(buf_mode), 91)
                     self.kernel32.CloseHandle(d.handle)
                 except Exception:
                     pass

@@ -1,7 +1,8 @@
 """
 Modern cyberpunk HUD (Heads-Up Display) and interactive UI.
 Supports dynamic multi-monitor positioning, spectrum visualizer,
-controls, Bluetooth device discovery, and Direct Manual IP/MAC Connection.
+controls, Bluetooth device discovery, Direct Manual IP/MAC Connection,
+and instant Overdrive / Crazy Strobe Mode toggle.
 """
 
 import time
@@ -136,7 +137,7 @@ class HUD:
 
     def _build_layout(self):
         mon = self.active_mon_rect
-        panel_w = min(780, mon.width - 40)
+        panel_w = min(800, mon.width - 40)
         panel_h = 320
         panel_x = mon.x + (mon.width - panel_w) // 2
         panel_y = mon.y + mon.height - panel_h - 20
@@ -151,12 +152,14 @@ class HUD:
         self.btn_style = pygame.Rect(panel_x + 30 + bw * 2, by, bw, 32)
         self.btn_device = pygame.Rect(panel_x + 40 + bw * 3, by, bw, 32)
 
-        # Button row 2 (Displays, Dual FX, Sync Panel, Safe Mode)
+        # Button row 2 (Displays, Dual FX, Sync Panel, Crazy Mode, Safe Mode)
+        bw2 = (panel_w - 60) // 5
         by2 = by + 38
-        self.btn_displays = pygame.Rect(panel_x + 10, by2, bw, 32)
-        self.btn_dualfx = pygame.Rect(panel_x + 20 + bw, by2, bw, 32)
-        self.btn_sync = pygame.Rect(panel_x + 30 + bw * 2, by2, bw, 32)
-        self.btn_safe = pygame.Rect(panel_x + 40 + bw * 3, by2, bw, 32)
+        self.btn_displays = pygame.Rect(panel_x + 10, by2, bw2, 32)
+        self.btn_dualfx = pygame.Rect(panel_x + 20 + bw2, by2, bw2, 32)
+        self.btn_sync = pygame.Rect(panel_x + 30 + bw2 * 2, by2, bw2, 32)
+        self.btn_overdrive = pygame.Rect(panel_x + 40 + bw2 * 3, by2, bw2, 32)
+        self.btn_safe = pygame.Rect(panel_x + 50 + bw2 * 4, by2, bw2, 32)
 
         # Slider track rectangles
         slider_w = panel_w - 240
@@ -284,8 +287,13 @@ class HUD:
         elif self.btn_sync.collidepoint(pos):
             self.toggle_sync_modal()
             return True
+        elif self.btn_overdrive.collidepoint(pos):
+            visualizer.toggle_overdrive()
+            audio_mgr.set_overdrive(visualizer.overdrive_mode)
+            return True
         elif self.btn_safe.collidepoint(pos):
             visualizer.toggle_safe_mode()
+            audio_mgr.set_overdrive(visualizer.overdrive_mode)
             return True
 
         return False
@@ -338,11 +346,17 @@ class HUD:
         panel = self.panel_rect
         pygame.draw.rect(hud_surf, (15, 17, 26, min(235, alpha_int)), panel, border_radius=14)
 
-        border_col = (0, 240, 255, min(180, alpha_int)) if not visualizer.safe_mode else (80, 220, 150, min(180, alpha_int))
-        pygame.draw.rect(hud_surf, border_col, panel, width=2, border_radius=14)
+        if visualizer.overdrive_mode:
+            title_surf = self.font_title.render("⚡ BEAT STROBE FX [🔥 OVERDRIVE ACTIVE]", True, (255, 75, 55))
+            border_col = (255, 60, 40, min(220, alpha_int))
+        elif visualizer.safe_mode:
+            title_surf = self.font_title.render("⚡ BEAT STROBE FX [SAFE GLOW]", True, (80, 240, 150))
+            border_col = (80, 220, 150, min(180, alpha_int))
+        else:
+            title_surf = self.font_title.render("⚡ BEAT STROBE FX [DUAL MONITOR READY]", True, (255, 255, 255))
+            border_col = (0, 240, 255, min(180, alpha_int))
 
-        # Title
-        title_surf = self.font_title.render("⚡ BEAT STROBE FX [DUAL MONITOR READY]", True, (255, 255, 255))
+        pygame.draw.rect(hud_surf, border_col, panel, width=2, border_radius=14)
         hud_surf.blit(title_surf, (panel.x + 20, panel.y + 12))
 
         # Audio source tag
@@ -430,7 +444,7 @@ class HUD:
         self._render_button(hud_surf, self.btn_style, f"Style: {visualizer.current_style}", (30, 35, 55), (180, 100, 255), alpha_int)
         self._render_button(hud_surf, self.btn_device, "Audio: [Switch]", (30, 35, 55), (100, 255, 180), alpha_int)
 
-        # Action Buttons Row 2
+        # Action Buttons Row 2 (Displays, Dual FX, Sync, Crazy Overdrive, Safe Mode)
         disp_txt = display_mgr.current_mode
         if len(disp_txt) > 18:
             disp_txt = disp_txt[:16] + ".."
@@ -454,12 +468,18 @@ class HUD:
             sync_border = (120, 180, 240)
         self._render_button(hud_surf, self.btn_sync, sync_label, sync_bg, sync_border, alpha_int)
 
-        safe_tag = "[Safe Mode: ON]" if visualizer.safe_mode else "[Safe Mode: OFF]"
+        # Crazy Overdrive Button
+        crazy_tag = "🔥 CRAZY: ON" if visualizer.overdrive_mode else "Crazy [X]: OFF"
+        crazy_bg = (85, 20, 20) if visualizer.overdrive_mode else (30, 35, 55)
+        crazy_border = (255, 65, 45) if visualizer.overdrive_mode else (140, 70, 60)
+        self._render_button(hud_surf, self.btn_overdrive, crazy_tag, crazy_bg, crazy_border, alpha_int)
+
+        safe_tag = "Safe: ON" if visualizer.safe_mode else "Safe: OFF"
         safe_bg = (20, 60, 40) if visualizer.safe_mode else (30, 35, 55)
         self._render_button(hud_surf, self.btn_safe, safe_tag, safe_bg, (100, 255, 150), alpha_int)
 
         # Hotkey Footer
-        hints = "Hotkeys: [ESC] Exit  [F/F11] Displays  [B] Dual FX  [N] Bluetooth Sync  [M] Mode  [P] Palette  [S] Safe  [H] Hide"
+        hints = "Hotkeys: [ESC] Exit  [X] 🔥 CRAZY STROBE  [F/F11] Displays  [B] Dual FX  [N] Sync  [M] Mode  [P] Palette  [S] Safe  [H] Hide"
         hint_surf = self.font_small.render(hints, True, (140, 145, 165))
         hud_surf.blit(hint_surf, (panel.x + (panel.width - hint_surf.get_width()) // 2, panel.y + panel.height - 24))
 
@@ -481,15 +501,12 @@ class HUD:
         pygame.draw.rect(overlay, (20, 24, 38), modal_rect, border_radius=14)
         pygame.draw.rect(overlay, (0, 220, 255), modal_rect, width=2, border_radius=14)
 
-        # Header
         head_txt = self.font_title.render("📡 MULTI-COMPUTER SYNC (BLUETOOTH & NETWORK)", True, (255, 255, 255))
         overlay.blit(head_txt, (mx + 25, my + 18))
 
-        # Close button
         btn_close = pygame.Rect(mx + modal_w - 90, my + 15, 75, 28)
         self._render_button(overlay, btn_close, "Close [N]", (40, 45, 60), (160, 160, 160), 255)
 
-        # Tabs: Standalone, Host, Client
         tab_w = (modal_w - 60) // 3
         tab_y = my + 60
 
@@ -505,7 +522,6 @@ class HUD:
         bg_c = (0, 140, 220) if sync_mgr.role == ROLE_CLIENT else (30, 35, 55)
         self._render_button(overlay, tab_client, "📲 Client (Sync to Host)", bg_c, (0, 200, 255), 255)
 
-        # Content Area
         content_box = pygame.Rect(mx + 20, my + 105, modal_w - 40, 315)
         pygame.draw.rect(overlay, (14, 17, 28), content_box, border_radius=10)
         pygame.draw.rect(overlay, (45, 50, 70), content_box, width=1, border_radius=10)
@@ -549,7 +565,6 @@ class HUD:
 
             self.host_item_rects = []
             if sync_mgr.client_sock:
-                # Connected View
                 conn_info = [
                     f"✓ Synchronized to Host: {sync_mgr.client_connected_host}",
                     f"Latency: {sync_mgr.client_latency_ms:.1f} ms (Real-time sub-frame sync)",
@@ -563,7 +578,6 @@ class HUD:
                 self._render_button(overlay, btn_disc, "Disconnect", (60, 25, 30), (255, 80, 80), 255)
 
             else:
-                # Discovered Hosts List
                 overlay.blit(self.font_small.render("Discovered Hosts & Nearby Bluetooth Devices:", True, (160, 165, 185)), (content_box.x + 25, cy + 24))
 
                 discovered = sync_mgr.get_all_discovered_hosts()
@@ -588,12 +602,10 @@ class HUD:
 
                         item_y += 40
 
-                # Bottom Controls
                 btn_rescan = pygame.Rect(content_box.x + 20, content_box.y + content_box.height - 48, 120, 32)
                 self._render_button(overlay, btn_rescan, "🔄 Scan Again", (35, 45, 65), (100, 200, 255), 255)
 
                 if self.entering_custom_host:
-                    # Input box
                     inp_rect = pygame.Rect(content_box.x + 150, content_box.y + content_box.height - 48, 280, 32)
                     pygame.draw.rect(overlay, (10, 14, 24), inp_rect, border_radius=6)
                     pygame.draw.rect(overlay, (0, 240, 255), inp_rect, width=2, border_radius=6)

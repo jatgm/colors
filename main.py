@@ -1,7 +1,7 @@
 """
 Beat Strobe - Screen Color Strober Synced to Audio Beat
-Supports multi-monitor borderless fullscreen and multi-computer
-Bluetooth & Network synchronization (Host / Client).
+Supports multi-monitor borderless fullscreen, Extreme Crazy Overdrive,
+and multi-computer Bluetooth & Network synchronization (Host / Client).
 """
 
 import sys
@@ -24,7 +24,7 @@ from sync_manager import SyncManager, ROLE_STANDALONE, ROLE_HOST, ROLE_CLIENT
 class BeatStrobeApp:
     def __init__(self):
         pygame.init()
-        pygame.display.set_caption("⚡ Beat Strobe - Dual Monitor & Bluetooth Sync")
+        pygame.display.set_caption("⚡ Beat Strobe - Dual Monitor & Crazy Overdrive")
 
         # Display manager for multi-monitor setup
         self.display_mgr = DisplayManager()
@@ -37,6 +37,10 @@ class BeatStrobeApp:
         self.visualizer = VisualizerEngine(self.screen_w, self.screen_h)
         self.hud = HUD(self.screen_w, self.screen_h)
         self.sync_mgr = SyncManager()
+
+        # Engage Crazy Overdrive Mode by default for maximum strobe intensity!
+        self.audio_mgr.set_overdrive(True)
+        self.visualizer.overdrive_mode = True
 
         if initial_mon:
             self.hud.set_active_monitor(initial_mon)
@@ -82,7 +86,7 @@ class BeatStrobeApp:
                     elif event.type == pygame.KEYDOWN:
                         self.hud.notify_interaction()
 
-                        # Text input in Sync Modal (IP / MAC typing)
+                        # Text input in Sync Modal
                         if self.hud.handle_text_input(event, self.sync_mgr):
                             continue
 
@@ -99,6 +103,8 @@ class BeatStrobeApp:
                                 self.hud.warning_dismissed = True
                             elif event.key == pygame.K_s:
                                 self.visualizer.safe_mode = True
+                                self.visualizer.overdrive_mode = False
+                                self.audio_mgr.set_overdrive(False)
                                 self.hud.warning_dismissed = True
                             elif event.key == pygame.K_ESCAPE:
                                 self.running = False
@@ -107,6 +113,10 @@ class BeatStrobeApp:
                         # Main Keybindings
                         if event.key == pygame.K_ESCAPE:
                             self.running = False
+                        elif event.key == pygame.K_x:
+                            # Toggle Crazy Overdrive Mode!
+                            self.visualizer.toggle_overdrive()
+                            self.audio_mgr.set_overdrive(self.visualizer.overdrive_mode)
                         elif event.key == pygame.K_n:
                             self.hud.toggle_sync_modal()
                         elif event.key in (pygame.K_f, pygame.K_F11) or (event.key == pygame.K_RETURN and (event.mod & pygame.KMOD_ALT)):
@@ -125,6 +135,7 @@ class BeatStrobeApp:
                             self.audio_mgr.cycle_device()
                         elif event.key == pygame.K_s:
                             self.visualizer.toggle_safe_mode()
+                            self.audio_mgr.set_overdrive(self.visualizer.overdrive_mode)
                         elif event.key == pygame.K_t:
                             self.audio_mgr.toggle_demo_mode()
                         elif event.key == pygame.K_UP:
@@ -134,9 +145,9 @@ class BeatStrobeApp:
                             new_sens = max(MIN_SENSITIVITY, self.audio_mgr.get_sensitivity() - 0.1)
                             self.audio_mgr.set_sensitivity(new_sens)
                         elif event.key == pygame.K_RIGHT:
-                            self.visualizer.set_decay_rate(self.visualizer.decay_rate + 2.0)
+                            self.visualizer.set_decay_rate(self.visualizer.decay_rate + 3.0)
                         elif event.key == pygame.K_LEFT:
-                            self.visualizer.set_decay_rate(self.visualizer.decay_rate - 2.0)
+                            self.visualizer.set_decay_rate(self.visualizer.decay_rate - 3.0)
                         elif event.key == pygame.K_SPACE:
                             self.visualizer.trigger_kick()
 
@@ -168,19 +179,21 @@ class BeatStrobeApp:
 
                 # 2. Audio & Sync State Processing
                 if self.sync_mgr.role == ROLE_CLIENT:
-                    # Client mode: consume incoming packets from host
                     incoming_packets = self.sync_mgr.get_incoming_beats()
                     audio_state = self.audio_mgr.get_latest_state()
 
                     for pkt in incoming_packets:
                         if pkt.get("type") in ("BEAT", "STATE"):
+                            if pkt.get("is_drop"):
+                                self.visualizer.trigger_drop()
                             if pkt.get("is_kick"):
                                 self.visualizer.trigger_kick()
                                 self.visualizer.kick_intensity = pkt.get("intensity", 1.0)
                             if pkt.get("is_snare"):
                                 self.visualizer.trigger_snare()
+                            if pkt.get("is_hihat"):
+                                self.visualizer.trigger_hihat()
 
-                            # Sync colors and settings from Host
                             if "color" in pkt:
                                 self.visualizer.current_color = tuple(pkt["color"])
                             if "secondary_color" in pkt:
@@ -193,6 +206,8 @@ class BeatStrobeApp:
                                 self.visualizer.decay_rate = pkt["decay"]
                             if "safe" in pkt:
                                 self.visualizer.safe_mode = pkt["safe"]
+                            if "overdrive" in pkt:
+                                self.visualizer.overdrive_mode = pkt["overdrive"]
                             if "bpm" in pkt:
                                 audio_state["bpm"] = pkt["bpm"]
                             if "bass_level" in pkt:
@@ -202,26 +217,29 @@ class BeatStrobeApp:
                                 audio_state["total_level"] = pkt.get("total_level", 0.0)
 
                 else:
-                    # Standalone or Host: capture local audio
                     audio_state = self.audio_mgr.get_latest_state()
 
-                    # If Host, broadcast beats to connected clients over Bluetooth & Network
                     if self.sync_mgr.role == ROLE_HOST:
                         is_kick = audio_state.get("is_kick", False)
                         is_snare = audio_state.get("is_snare", False)
+                        is_hihat = audio_state.get("is_hihat", False)
+                        is_drop = audio_state.get("is_drop", False)
 
-                        if is_kick or is_snare or (now - last_host_sync_time > 0.25):
+                        if is_kick or is_snare or is_hihat or is_drop or (now - last_host_sync_time > 0.20):
                             last_host_sync_time = now
                             packet = {
-                                "type": "BEAT" if (is_kick or is_snare) else "STATE",
+                                "type": "BEAT" if (is_kick or is_snare or is_hihat or is_drop) else "STATE",
                                 "is_kick": is_kick,
                                 "is_snare": is_snare,
+                                "is_hihat": is_hihat,
+                                "is_drop": is_drop,
                                 "color": list(self.visualizer.current_color),
                                 "secondary_color": list(self.visualizer.secondary_color),
                                 "palette": self.visualizer.palette_name,
                                 "mode": self.visualizer.mode,
                                 "decay": self.visualizer.decay_rate,
                                 "safe": self.visualizer.safe_mode,
+                                "overdrive": self.visualizer.overdrive_mode,
                                 "dual_side": self.visualizer.alternating_side,
                                 "intensity": self.visualizer.kick_intensity if is_kick else 0.0,
                                 "bpm": audio_state.get("bpm", 0.0),

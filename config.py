@@ -12,11 +12,15 @@ SAMPLE_RATE = 44100
 CHUNK_SIZE = 1024  # ~23.2ms per audio chunk
 
 # Frequency Band definitions (in Hz)
-BASS_FREQ_RANGE = (30, 160)
-MID_FREQ_RANGE = (160, 2400)
-HIGH_FREQ_RANGE = (2400, 9000)
+BASS_FREQ_RANGE = (25, 170)
+MID_FREQ_RANGE = (170, 2400)
+HIGH_FREQ_RANGE = (2400, 7500)
+HIHAT_FREQ_RANGE = (7500, 16000)
 
 # Strobe Modes
+MODE_PSYCHO_OVERDRIVE = "🔥 Psycho Overdrive (Ultra)"
+MODE_MACHINE_GUN = "⚡ Machine-Gun Multi-Band"
+MODE_STROBE_BLITZ = "💥 Hyper Strobe Blitz"
 MODE_HARD_STROBE = "Hard Strobe"
 MODE_DUAL_STROBE = "Kick + Snare Dual"
 MODE_SMOOTH_PULSE = "Smooth Rave Pulse"
@@ -25,6 +29,9 @@ MODE_CHAOS_BLITZ = "Chaos Blitz"
 MODE_MONOCHROME = "Monochrome Blitz"
 
 STROBE_MODES = [
+    MODE_PSYCHO_OVERDRIVE,
+    MODE_MACHINE_GUN,
+    MODE_STROBE_BLITZ,
     MODE_HARD_STROBE,
     MODE_DUAL_STROBE,
     MODE_SMOOTH_PULSE,
@@ -103,18 +110,24 @@ PALETTES = {
 PALETTE_NAMES = list(PALETTES.keys())
 
 # Default Sensitivity & Decay values
-DEFAULT_SENSITIVITY = 1.3    # Multiplier for beat detection threshold (higher = fewer beats, lower = more sensitive)
-MIN_SENSITIVITY = 0.6
-MAX_SENSITIVITY = 2.5
+DEFAULT_SENSITIVITY = 1.4
+MIN_SENSITIVITY = 0.5
+MAX_SENSITIVITY = 3.5
 
-DEFAULT_DECAY_RATE = 16.0    # Flash decay speed (higher = faster snap to dark, lower = longer fade)
+DEFAULT_DECAY_RATE = 28.0    # Snappier default strobe decay
 MIN_DECAY_RATE = 4.0
-MAX_DECAY_RATE = 35.0
+MAX_DECAY_RATE = 80.0        # Allows ultra-sharp 1-frame blackout cutoffs
 
 # Refractory period / cooldown between beats (in seconds)
-KICK_COOLDOWN = 0.12        # ~500 max BPM limit for kicks
-SNARE_COOLDOWN = 0.10       # ~600 max BPM limit for snares
+KICK_COOLDOWN = 0.08         # Standard ~750 max BPM
+SNARE_COOLDOWN = 0.07
+HIHAT_COOLDOWN = 0.05
+
+# Overdrive / Crazy Mode Cooldowns (Rapid Machine-Gun Strobe: up to 30-40 triggers/sec!)
+OVERDRIVE_KICK_COOLDOWN = 0.035
+OVERDRIVE_SNARE_COOLDOWN = 0.030
+OVERDRIVE_HIHAT_COOLDOWN = 0.022
 
 # HUD Settings
-HUD_AUTO_HIDE_DELAY = 3.5   # Seconds of mouse inactivity before HUD fades out
-HUD_FADE_SPEED = 4.0        # Alpha fade speed
+HUD_AUTO_HIDE_DELAY = 3.5    # Seconds of mouse inactivity before HUD fades out
+HUD_FADE_SPEED = 4.0         # Alpha fade speed

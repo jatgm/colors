@@ -2,7 +2,7 @@
 Modern cyberpunk HUD (Heads-Up Display) and interactive UI.
 Supports dynamic multi-monitor positioning, spectrum visualizer,
 controls, Bluetooth device discovery, Direct Manual IP/MAC Connection,
-and instant Overdrive / Crazy Strobe Mode toggle.
+Automatic Gain Control (AGC) diagnostics, and Pre-Amp Boost controls.
 """
 
 import time
@@ -15,6 +15,9 @@ from config import (
     MAX_SENSITIVITY,
     MIN_DECAY_RATE,
     MAX_DECAY_RATE,
+    DEFAULT_PREAMP_GAIN,
+    MIN_PREAMP_GAIN,
+    MAX_PREAMP_GAIN,
 )
 from sync_manager import (
     ROLE_STANDALONE,
@@ -137,16 +140,22 @@ class HUD:
 
     def _build_layout(self):
         mon = self.active_mon_rect
-        panel_w = min(800, mon.width - 40)
-        panel_h = 320
+        panel_w = min(820, mon.width - 40)
+        panel_h = 350
         panel_x = mon.x + (mon.width - panel_w) // 2
         panel_y = mon.y + mon.height - panel_h - 20
 
         self.panel_rect = pygame.Rect(panel_x, panel_y, panel_w, panel_h)
 
+        # Sliders: Sensitivity, Pre-Amp Gain, Decay Speed
+        slider_w = panel_w - 260
+        self.slider_sens_rect = pygame.Rect(panel_x + 140, panel_y + 92, slider_w, 13)
+        self.slider_gain_rect = pygame.Rect(panel_x + 140, panel_y + 116, slider_w, 13)
+        self.slider_decay_rect = pygame.Rect(panel_x + 140, panel_y + 140, slider_w, 13)
+
         # Button row 1 (Mode, Palette, Style, Device)
         bw = (panel_w - 50) // 4
-        by = panel_y + 160
+        by = panel_y + 175
         self.btn_mode = pygame.Rect(panel_x + 10, by, bw, 32)
         self.btn_palette = pygame.Rect(panel_x + 20 + bw, by, bw, 32)
         self.btn_style = pygame.Rect(panel_x + 30 + bw * 2, by, bw, 32)
@@ -160,11 +169,6 @@ class HUD:
         self.btn_sync = pygame.Rect(panel_x + 30 + bw2 * 2, by2, bw2, 32)
         self.btn_overdrive = pygame.Rect(panel_x + 40 + bw2 * 3, by2, bw2, 32)
         self.btn_safe = pygame.Rect(panel_x + 50 + bw2 * 4, by2, bw2, 32)
-
-        # Slider track rectangles
-        slider_w = panel_w - 240
-        self.slider_sens_rect = pygame.Rect(panel_x + 130, panel_y + 98, slider_w, 14)
-        self.slider_decay_rect = pygame.Rect(panel_x + 130, panel_y + 124, slider_w, 14)
 
     def handle_mouse_down(self, pos, audio_mgr, visualizer, display_mgr, sync_mgr, on_display_change):
         self.notify_interaction()
@@ -259,6 +263,10 @@ class HUD:
             self.dragging_slider = "sens"
             self._update_slider_pos(pos[0], self.slider_sens_rect, MIN_SENSITIVITY, MAX_SENSITIVITY, audio_mgr.set_sensitivity)
             return True
+        elif self.slider_gain_rect.inflate(10, 10).collidepoint(pos):
+            self.dragging_slider = "gain"
+            self._update_slider_pos(pos[0], self.slider_gain_rect, MIN_PREAMP_GAIN, MAX_PREAMP_GAIN, audio_mgr.set_preamp_gain)
+            return True
         elif self.slider_decay_rect.inflate(10, 10).collidepoint(pos):
             self.dragging_slider = "decay"
             self._update_slider_pos(pos[0], self.slider_decay_rect, MIN_DECAY_RATE, MAX_DECAY_RATE, visualizer.set_decay_rate)
@@ -302,13 +310,16 @@ class HUD:
         self.dragging_slider = None
 
     def handle_mouse_motion(self, pos, audio_mgr, visualizer, display_mgr):
-        mon = display_mgr.get_monitor_for_point(pos[0], pos[1])
-        if mon.rect != self.active_mon_rect:
-            self.set_active_monitor(mon.rect)
+        if display_mgr is not None:
+            mon = display_mgr.get_monitor_for_point(pos[0], pos[1])
+            if mon is not None and mon.rect != self.active_mon_rect:
+                self.set_active_monitor(mon.rect)
 
         self.notify_interaction()
         if self.dragging_slider == "sens":
             self._update_slider_pos(pos[0], self.slider_sens_rect, MIN_SENSITIVITY, MAX_SENSITIVITY, audio_mgr.set_sensitivity)
+        elif self.dragging_slider == "gain":
+            self._update_slider_pos(pos[0], self.slider_gain_rect, MIN_PREAMP_GAIN, MAX_PREAMP_GAIN, audio_mgr.set_preamp_gain)
         elif self.dragging_slider == "decay":
             self._update_slider_pos(pos[0], self.slider_decay_rect, MIN_DECAY_RATE, MAX_DECAY_RATE, visualizer.set_decay_rate)
 
@@ -344,7 +355,7 @@ class HUD:
         hud_surf = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
 
         panel = self.panel_rect
-        pygame.draw.rect(hud_surf, (15, 17, 26, min(235, alpha_int)), panel, border_radius=14)
+        pygame.draw.rect(hud_surf, (15, 17, 26, min(238, alpha_int)), panel, border_radius=14)
 
         if visualizer.overdrive_mode:
             title_surf = self.font_title.render("⚡ BEAT STROBE FX [🔥 OVERDRIVE ACTIVE]", True, (255, 75, 55))
@@ -359,21 +370,25 @@ class HUD:
         pygame.draw.rect(hud_surf, border_col, panel, width=2, border_radius=14)
         hud_surf.blit(title_surf, (panel.x + 20, panel.y + 12))
 
-        # Audio source tag
+        # Audio source tag & Input/AGC Diagnostic badge
+        raw_p = audio_state.get("raw_peak", 0.0)
+        agc_g = audio_state.get("agc_gain", 1.0)
+        diag_str = f"In: {int(raw_p * 100)}% (AGC: {agc_g:.1f}x)"
+
         if sync_mgr.role == ROLE_CLIENT:
             dev_tag = f"[Client Synced] {sync_mgr.client_connected_host or 'Connecting'}"
             dev_col = (100, 240, 255)
         else:
-            dev_tag = audio_mgr.current_device_name
+            dev_tag = f"{audio_mgr.current_device_name} | {diag_str}"
             dev_col = (100, 255, 150) if not audio_mgr.demo_mode else (255, 180, 50)
         dev_surf = self.font_small.render(f"Source: {dev_tag}", True, dev_col)
         hud_surf.blit(dev_surf, (panel.x + panel.width - dev_surf.get_width() - 20, panel.y + 16))
 
         # 24-Band Spectrum Analyzer
         spec_x = panel.x + 20
-        spec_y = panel.y + 44
+        spec_y = panel.y + 42
         spec_w = 260
-        spec_h = 42
+        spec_h = 44
         spec_bars = audio_state.get("spectrum_bars", [])
         num_bars = len(spec_bars)
         if num_bars > 0:
@@ -388,26 +403,36 @@ class HUD:
                 bar_rect = pygame.Rect(int(bx), spec_y + spec_h - bh, max(2, int(bw)), max(2, bh))
                 pygame.draw.rect(hud_surf, (bar_r, bar_g, bar_b, alpha_int), bar_rect, border_radius=1)
 
-        # Frequency Level Bars
+        # Frequency Level Bars (Enlarged and Glowing with VU Peak Markers)
         levels_x = spec_x + spec_w + 24
         levels_y = spec_y
-        meter_w = 120
-        meter_h = 10
+        meter_w = 125
+        meter_h = 12
 
+        # BASS
         b_val = audio_state.get("bass_level", 0.0)
         hud_surf.blit(self.font_small.render("BASS", True, (255, 80, 120)), (levels_x, levels_y - 2))
-        pygame.draw.rect(hud_surf, (40, 40, 50, alpha_int), (levels_x + 40, levels_y, meter_w, meter_h), border_radius=3)
-        pygame.draw.rect(hud_surf, (255, 50, 100, alpha_int), (levels_x + 40, levels_y, int(meter_w * b_val), meter_h), border_radius=3)
+        pygame.draw.rect(hud_surf, (35, 38, 50, alpha_int), (levels_x + 40, levels_y, meter_w, meter_h), border_radius=3)
+        fill_b = int(meter_w * b_val)
+        if fill_b > 0:
+            b_color = (255, 30, 90) if b_val < 0.85 else (255, 230, 240)
+            pygame.draw.rect(hud_surf, (*b_color, alpha_int), (levels_x + 40, levels_y, fill_b, meter_h), border_radius=3)
 
+        # MID
         m_val = audio_state.get("mid_level", 0.0)
-        hud_surf.blit(self.font_small.render("MID", True, (80, 240, 120)), (levels_x, levels_y + 15))
-        pygame.draw.rect(hud_surf, (40, 40, 50, alpha_int), (levels_x + 40, levels_y + 17, meter_w, meter_h), border_radius=3)
-        pygame.draw.rect(hud_surf, (80, 240, 120, alpha_int), (levels_x + 40, levels_y + 17, int(meter_w * m_val), meter_h), border_radius=3)
+        hud_surf.blit(self.font_small.render("MID", True, (80, 240, 120)), (levels_x, levels_y + 16))
+        pygame.draw.rect(hud_surf, (35, 38, 50, alpha_int), (levels_x + 40, levels_y + 16, meter_w, meter_h), border_radius=3)
+        fill_m = int(meter_w * m_val)
+        if fill_m > 0:
+            pygame.draw.rect(hud_surf, (80, 240, 120, alpha_int), (levels_x + 40, levels_y + 16, fill_m, meter_h), border_radius=3)
 
+        # HIGH
         h_val = audio_state.get("high_level", 0.0)
         hud_surf.blit(self.font_small.render("HIGH", True, (80, 180, 255)), (levels_x, levels_y + 32))
-        pygame.draw.rect(hud_surf, (40, 40, 50, alpha_int), (levels_x + 40, levels_y + 34, meter_w, meter_h), border_radius=3)
-        pygame.draw.rect(hud_surf, (80, 180, 255, alpha_int), (levels_x + 40, levels_y + 34, int(meter_w * h_val), meter_h), border_radius=3)
+        pygame.draw.rect(hud_surf, (35, 38, 50, alpha_int), (levels_x + 40, levels_y + 32, meter_w, meter_h), border_radius=3)
+        fill_h = int(meter_w * h_val)
+        if fill_h > 0:
+            pygame.draw.rect(hud_surf, (80, 180, 255, alpha_int), (levels_x + 40, levels_y + 32, fill_h, meter_h), border_radius=3)
 
         # Beat Pulse LED & BPM
         beat_x = levels_x + meter_w + 65
@@ -426,17 +451,25 @@ class HUD:
         bpm_surf = self.font_title.render(bpm_str, True, (0, 240, 255))
         hud_surf.blit(bpm_surf, (beat_x + 35, beat_y - 12))
 
-        # Sliders: Sensitivity & Decay
+        # Sliders: Sensitivity, Pre-Amp Gain, Decay Speed
         sens = audio_mgr.get_sensitivity()
+        pre_g = audio_mgr.get_preamp_gain()
         decay = visualizer.decay_rate
 
+        # 1. Sensitivity Slider
         sens_label = self.font_small.render(f"Sensitivity: {sens:.1f}x", True, (220, 220, 220))
         hud_surf.blit(sens_label, (panel.x + 20, self.slider_sens_rect.y - 1))
         self._render_slider(hud_surf, self.slider_sens_rect, sens, MIN_SENSITIVITY, MAX_SENSITIVITY, (0, 220, 255), alpha_int)
 
+        # 2. Pre-Amp Boost Slider (AGC multiplier)
+        gain_label = self.font_small.render(f"Pre-Amp Boost: {pre_g:.1f}x", True, (255, 200, 80))
+        hud_surf.blit(gain_label, (panel.x + 20, self.slider_gain_rect.y - 1))
+        self._render_slider(hud_surf, self.slider_gain_rect, pre_g, MIN_PREAMP_GAIN, MAX_PREAMP_GAIN, (255, 180, 50), alpha_int)
+
+        # 3. Decay Speed Slider
         decay_label = self.font_small.render(f"Decay Speed: {decay:.0f}", True, (220, 220, 220))
         hud_surf.blit(decay_label, (panel.x + 20, self.slider_decay_rect.y - 1))
-        self._render_slider(hud_surf, self.slider_decay_rect, decay, MIN_DECAY_RATE, MAX_DECAY_RATE, (255, 120, 0), alpha_int)
+        self._render_slider(hud_surf, self.slider_decay_rect, decay, MIN_DECAY_RATE, MAX_DECAY_RATE, (255, 100, 0), alpha_int)
 
         # Action Buttons Row 1
         self._render_button(hud_surf, self.btn_mode, f"Mode: {visualizer.mode}", (30, 35, 55), (0, 200, 255), alpha_int)
@@ -468,7 +501,6 @@ class HUD:
             sync_border = (120, 180, 240)
         self._render_button(hud_surf, self.btn_sync, sync_label, sync_bg, sync_border, alpha_int)
 
-        # Crazy Overdrive Button
         crazy_tag = "🔥 CRAZY: ON" if visualizer.overdrive_mode else "Crazy [X]: OFF"
         crazy_bg = (85, 20, 20) if visualizer.overdrive_mode else (30, 35, 55)
         crazy_border = (255, 65, 45) if visualizer.overdrive_mode else (140, 70, 60)

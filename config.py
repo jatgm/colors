@@ -12,9 +12,10 @@ SAMPLE_RATE = 44100
 CHUNK_SIZE = 1024  # ~23.2ms per audio chunk
 
 # Frequency Band definitions (in Hz)
-BASS_FREQ_RANGE = (25, 170)
-MID_FREQ_RANGE = (170, 2400)
-HIGH_FREQ_RANGE = (2400, 7500)
+# Bass expanded up to 260Hz to catch kick punch, 808s, and bassline attacks
+BASS_FREQ_RANGE = (25, 260)
+MID_FREQ_RANGE = (260, 2800)
+HIGH_FREQ_RANGE = (2800, 7500)
 HIHAT_FREQ_RANGE = (7500, 16000)
 
 # Strobe Modes
@@ -116,18 +117,23 @@ MAX_SENSITIVITY = 3.5
 
 DEFAULT_DECAY_RATE = 28.0    # Snappier default strobe decay
 MIN_DECAY_RATE = 4.0
-MAX_DECAY_RATE = 80.0        # Allows ultra-sharp 1-frame blackout cutoffs
+MAX_DECAY_RATE = 80.0        # Ultra-sharp 1-frame blackout cutoffs
+
+# Pre-Amp Gain Multiplier (AGC Boost)
+DEFAULT_PREAMP_GAIN = 1.8
+MIN_PREAMP_GAIN = 0.5
+MAX_PREAMP_GAIN = 8.0
 
 # Refractory period / cooldown between beats (in seconds)
-KICK_COOLDOWN = 0.08         # Standard ~750 max BPM
+KICK_COOLDOWN = 0.08
 SNARE_COOLDOWN = 0.07
 HIHAT_COOLDOWN = 0.05
 
-# Overdrive / Crazy Mode Cooldowns (Rapid Machine-Gun Strobe: up to 30-40 triggers/sec!)
+# Overdrive / Crazy Mode Cooldowns
 OVERDRIVE_KICK_COOLDOWN = 0.035
 OVERDRIVE_SNARE_COOLDOWN = 0.030
 OVERDRIVE_HIHAT_COOLDOWN = 0.022
 
 # HUD Settings
-HUD_AUTO_HIDE_DELAY = 3.5    # Seconds of mouse inactivity before HUD fades out
-HUD_FADE_SPEED = 4.0         # Alpha fade speed
+HUD_AUTO_HIDE_DELAY = 3.5
+HUD_FADE_SPEED = 4.0

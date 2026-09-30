@@ -13,6 +13,8 @@ from config import (
     MAX_SENSITIVITY,
     MIN_DECAY_RATE,
     MAX_DECAY_RATE,
+    MIN_PREAMP_GAIN,
+    MAX_PREAMP_GAIN,
 )
 from audio_capture import AudioCaptureManager
 from visualizer import VisualizerEngine
@@ -144,6 +146,12 @@ class BeatStrobeApp:
                         elif event.key == pygame.K_DOWN:
                             new_sens = max(MIN_SENSITIVITY, self.audio_mgr.get_sensitivity() - 0.1)
                             self.audio_mgr.set_sensitivity(new_sens)
+                        elif event.key in (pygame.K_RIGHTBRACKET, pygame.K_PAGEUP, pygame.K_EQUALS):
+                            new_gain = min(MAX_PREAMP_GAIN, self.audio_mgr.get_preamp_gain() + 0.2)
+                            self.audio_mgr.set_preamp_gain(new_gain)
+                        elif event.key in (pygame.K_LEFTBRACKET, pygame.K_PAGEDOWN, pygame.K_MINUS):
+                            new_gain = max(MIN_PREAMP_GAIN, self.audio_mgr.get_preamp_gain() - 0.2)
+                            self.audio_mgr.set_preamp_gain(new_gain)
                         elif event.key == pygame.K_RIGHT:
                             self.visualizer.set_decay_rate(self.visualizer.decay_rate + 3.0)
                         elif event.key == pygame.K_LEFT:

@@ -1,7 +1,8 @@
 """
 Audio capture engine using soundcard.
 Supports WASAPI desktop audio loopback (Spotify, YouTube, Games, etc.)
-and physical microphone input, with real-time thread-safe beat analysis.
+and physical microphone input, with real-time thread-safe beat analysis
+and Dynamic Automatic Gain Control (AGC).
 """
 
 import threading
@@ -40,6 +41,9 @@ class AudioCaptureManager:
             "bpm_confidence": 0.0,
             "raw_waveform": np.zeros(CHUNK_SIZE, dtype=np.float32),
             "overdrive": True,
+            "raw_peak": 0.0,
+            "agc_gain": 1.0,
+            "preamp_gain": 1.8,
         }
 
         # Demo / Test mode (generates 128 BPM synthetic beats)
@@ -141,6 +145,12 @@ class AudioCaptureManager:
     def get_sensitivity(self):
         return self.detector.user_sensitivity
 
+    def set_preamp_gain(self, val):
+        self.detector.set_preamp_gain(val)
+
+    def get_preamp_gain(self):
+        return self.detector.user_gain
+
     def set_overdrive(self, enabled):
         self.detector.set_overdrive(enabled)
         with self.lock:
@@ -210,6 +220,9 @@ class AudioCaptureManager:
                     self.latest_state["bpm"] = self.demo_bpm
                     self.latest_state["bpm_confidence"] = 1.0
                     self.latest_state["raw_waveform"] = sim_audio
+                    self.latest_state["raw_peak"] = result.get("raw_peak", 0.0)
+                    self.latest_state["agc_gain"] = result.get("agc_gain", 1.0)
+                    self.latest_state["preamp_gain"] = result.get("preamp_gain", 1.8)
 
                 time.sleep(CHUNK_SIZE / SAMPLE_RATE * 0.85)
                 continue
@@ -249,6 +262,9 @@ class AudioCaptureManager:
                             self.latest_state["bpm"] = result["bpm"]
                             self.latest_state["bpm_confidence"] = result["bpm_confidence"]
                             self.latest_state["raw_waveform"] = mono
+                            self.latest_state["raw_peak"] = result.get("raw_peak", 0.0)
+                            self.latest_state["agc_gain"] = result.get("agc_gain", 1.0)
+                            self.latest_state["preamp_gain"] = result.get("preamp_gain", 1.8)
 
             except Exception:
                 time.sleep(0.2)

@@ -97,5 +97,6 @@ The program automatically detects all connected monitors (e.g. two 1920x1080 mon
 | **`S`** | **Safe Mode Toggle** | Toggles gentle pulsing glow vs intense hard strobe. |
 | **`T`** | **Demo Mode Toggle** | Synthesizes a 128 BPM electronic beat to test visuals without music. |
 | **`↑` / `↓`** | **Sensitivity** | Increases or decreases beat detection sensitivity. |
+| **`[` / `]`** or **`PgUp` / `PgDn`** | **Pre-Amp Boost** | Adjusts input AGC gain multiplier (0.5x to 8.0x) for soft/loud audio sources. |
 | **`→` / `←`** | **Decay Speed** | Adjusts how fast flashes fade out (snappy strobe vs lingering rave glow). |
 | **`SPACE`** | **Manual Flash** | Forces an instant kick beat flash. |

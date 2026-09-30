@@ -1,0 +1,4 @@
+numpy>=1.24.0
+pygame>=2.5.0
+soundcard>=0.4.3
+cffi>=1.15.0

@@ -332,48 +332,33 @@ class VisualizerEngine:
         if self.burst_remaining > 0 and not self.burst_is_on:
             return (0, 0, 0), (0, 0, 0), True
 
-        # Active beat strobe intensity
+        # Active beat strobe intensity (driven by kick, snare, or drop)
         beat_int = max(
             self.kick_intensity,
-            self.snare_intensity,
+            self.snare_intensity * 0.85,
             self.drop_intensity,
-            self.hihat_intensity * 0.75,
         )
 
         # Inter-beat silence/decay gate: cut to pitch black between beats
-        if beat_int < 0.12:
+        if beat_int < 0.20:
             return (0, 0, 0), (0, 0, 0), True
 
-        # Drop: 100% full-blast phosphor white blast
-        if self.drop_intensity > 0.20:
+        # Heavy bass drop: 100% full-blast phosphor white blast
+        if self.drop_intensity > 0.40:
             return (255, 255, 255), (255, 255, 255), True
 
-        # Snare / Clap: crisp white accent flash
-        if self.snare_intensity > 0.40:
-            w_val = min(255, int(200 + 55 * self.snare_intensity))
-            return (w_val, w_val, w_val), (w_val, w_val, w_val), True
-
-        # Kick / Rhythm Flash: scale palette color to full 255 power
+        # Rhythm Flash: scale palette color to full 255 saturation
         base_l = self.current_color
         base_r = self.secondary_color if self.dual_scheme in (DUAL_SCHEME_CONTRAST, DUAL_SCHEME_ALTERNATING) else self.current_color
 
-        def _scale_flash(col, intensity):
+        def _scale_flash(col):
             r, g, b = col
             max_c = max(r, g, b, 1)
             scale = 255.0 / max_c
-            sr = min(255, int(r * scale))
-            sg = min(255, int(g * scale))
-            sb = min(255, int(b * scale))
-            # Phosphor punch on hard impacts (>0.60): light all 3 diodes to maximize lumens
-            if intensity > 0.60:
-                punch = int(55 * (intensity - 0.60) / 0.40)
-                sr = min(255, sr + punch)
-                sg = min(255, sg + punch)
-                sb = min(255, sb + punch)
-            return (sr, sg, sb)
+            return (min(255, int(r * scale)), min(255, int(g * scale)), min(255, int(b * scale)))
 
-        col_left = _scale_flash(base_l, beat_int)
-        col_right = _scale_flash(base_r, beat_int)
+        col_left = _scale_flash(base_l)
+        col_right = _scale_flash(base_r)
         return col_left, col_right, True
 
     def trigger_kick(self):
@@ -410,8 +395,9 @@ class VisualizerEngine:
             self.current_color = (int(r * 255), int(g * 255), int(b * 255))
             r2, g2, b2 = colorsys.hsv_to_rgb((self.rainbow_hue + 0.5) % 1.0, 1.0, 1.0)
             self.secondary_color = (int(r2 * 255), int(g2 * 255), int(b2 * 255))
-        elif self.mode in (MODE_CHAOS_BLITZ, MODE_PSYCHO_OVERDRIVE):
-            self.current_color = random.choice(self.palette_colors)
+        elif self.mode == MODE_CHAOS_BLITZ:
+            choices = [c for c in self.palette_colors if c != self.current_color]
+            self.current_color = random.choice(choices) if choices else random.choice(self.palette_colors)
             self.secondary_color = random.choice(self.palette_colors)
         else:
             self.color_step = (self.color_step + 1) % len(self.palette_colors)

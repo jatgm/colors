@@ -272,6 +272,15 @@ class RazerChromaManager:
         buf_leg_bright[1:] = rep_leg_bright
         cbuf_leg_bright = (ctypes.c_char * 91).from_buffer(buf_leg_bright)
 
+        # 3. Initial Blackout (0, 0, 0)
+        rep_black_kbd = _create_razer_report(0x0F, 0x02, 0x09, [0x01, 0x05, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x1F)
+        buf_black_kbd = bytearray(91); buf_black_kbd[1:] = rep_black_kbd
+        cbuf_black_kbd = (ctypes.c_char * 91).from_buffer(buf_black_kbd)
+
+        rep_black_mouse = _create_razer_report(0x0F, 0x02, 0x09, [0x01, 0x04, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x3F)
+        buf_black_mouse = bytearray(91); buf_black_mouse[1:] = rep_black_mouse
+        cbuf_black_mouse = (ctypes.c_char * 91).from_buffer(buf_black_mouse)
+
         with self.lock:
             devs = list(self.devices)
 
@@ -280,15 +289,19 @@ class RazerChromaManager:
                 self.hid.HidD_SetFeature(dev.handle, cbuf_mode, 91)
                 self.hid.HidD_SetFeature(dev.handle, cbuf_ext_bright, 91)
                 self.hid.HidD_SetFeature(dev.handle, cbuf_leg_bright, 91)
-
-                # Check if mouse supports scroll wheel LED
-                if dev.device_type == "mouse":
+                if dev.device_type == "keyboard":
+                    self.hid.HidD_SetFeature(dev.handle, cbuf_black_kbd, 91)
+                elif dev.device_type == "mouse":
+                    self.hid.HidD_SetFeature(dev.handle, cbuf_black_mouse, 91)
+                    # Check if mouse supports scroll wheel LED
                     rep_sw = _create_razer_report(0x0F, 0x02, 0x09, [0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x3F)
                     buf_sw = bytearray(91); buf_sw[1:] = rep_sw
                     if self.hid.HidD_SetFeature(dev.handle, (ctypes.c_char * 91).from_buffer(buf_sw), 91):
                         rbuf = bytearray(91)
                         if self.hid.HidD_GetFeature(dev.handle, (ctypes.c_char * 91).from_buffer(rbuf), 91):
                             dev.has_scroll_wheel = (rbuf[1] == 0x02)
+                else:
+                    self.hid.HidD_SetFeature(dev.handle, cbuf_black_kbd, 91)
             except Exception:
                 pass
 
@@ -325,45 +338,23 @@ class RazerChromaManager:
 
     def _worker_loop(self):
         """Asynchronous worker loop sending 91-byte USB HID feature reports."""
-        last_sent_left = None
-        last_sent_right = None
-        flash_until_time = 0.0
+        last_sent_left = (0, 0, 0)
+        last_sent_right = (0, 0, 0)
 
         while self.running:
             try:
-                item = self.color_queue.get(timeout=0.015)
+                item = self.color_queue.get(timeout=0.030)
             except queue.Empty:
-                # If timeout occurred while holding a flash, check if hold timer expired
-                if flash_until_time > 0 and time.perf_counter() >= flash_until_time:
-                    flash_until_time = 0.0
-                    b_left, b_right = (0, 0, 0), (0, 0, 0)
-                else:
-                    continue
-            else:
-                c_left, c_right, strobe_cut = item
-                now = time.perf_counter()
+                continue
 
-                if strobe_cut:
-                    is_flash = (c_left != (0, 0, 0) or c_right != (0, 0, 0))
-                    if is_flash:
-                        if now >= flash_until_time:
-                            # Latch fresh peak flash for 70ms for maximum retinal brilliance
-                            flash_until_time = now + 0.070
-                            b_left, b_right = c_left, c_right
-                        else:
-                            # Keep holding current flash peak
-                            continue
-                    else:
-                        if now < flash_until_time:
-                            # Keep holding flash peak until hold duration elapses
-                            continue
-                        flash_until_time = 0.0
-                        b_left, b_right = (0, 0, 0), (0, 0, 0)
-                else:
-                    # Smooth rave pulsing mode (Safe Mode or Smooth Rave Pulse)
-                    flash_until_time = 0.0
-                    b_left = self._boost_peripheral_color(c_left, strobe_cut=False)
-                    b_right = self._boost_peripheral_color(c_right, strobe_cut=False)
+            c_left, c_right, strobe_cut = item
+
+            if strobe_cut:
+                b_left, b_right = c_left, c_right
+            else:
+                # Smooth rave pulsing mode (Safe Mode or Smooth Rave Pulse)
+                b_left = self._boost_peripheral_color(c_left, strobe_cut=False)
+                b_right = self._boost_peripheral_color(c_right, strobe_cut=False)
 
             if b_left == last_sent_left and b_right == last_sent_right:
                 continue

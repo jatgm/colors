@@ -114,6 +114,11 @@ class VisualizerEngine:
         self.snare_hold_timer = 0.0
         self.hihat_hold_timer = 0.0
 
+        # Peripheral RGB flash latch (deterministic timer for physical keyboard/mouse strobes)
+        self.peripheral_flash_until = 0.0
+        self.peripheral_flash_color_left = (0, 0, 0)
+        self.peripheral_flash_color_right = (0, 0, 0)
+
     def resize(self, width, height):
         self.width = max(100, width)
         self.height = max(100, height)
@@ -321,45 +326,27 @@ class VisualizerEngine:
         """Calculate exact synchronized peripheral RGB colors for Razer hardware.
         Returns ((r_left, g_left, b_left), (r_right, g_right, b_right), is_strobe_mode).
         In strobe modes: delivers 100% full-blast 255 peak color on beat impacts
-        and absolute pitch black (0, 0, 0) during inter-beat intervals.
+        for exactly 80ms, followed by absolute pitch black (0, 0, 0) until the next beat.
         In smooth modes: delivers smooth pulsing rave colors.
         """
         is_strobe = not (self.safe_mode or self.mode == MODE_SMOOTH_PULSE)
         if not is_strobe:
             return self.last_render_rgb_0, self.last_render_rgb_1, False
 
-        # If Martin Atomic burst strobe is in blackout micro-phase, cut to pitch black
-        if self.burst_remaining > 0 and not self.burst_is_on:
-            return (0, 0, 0), (0, 0, 0), True
+        # Active strobe flash window
+        if time.perf_counter() < self.peripheral_flash_until:
+            def _scale_flash(col):
+                r, g, b = col
+                max_c = max(r, g, b, 1)
+                scale = 255.0 / max_c
+                return (min(255, int(r * scale)), min(255, int(g * scale)), min(255, int(b * scale)))
 
-        # Active beat strobe intensity (driven by kick, snare, or drop)
-        beat_int = max(
-            self.kick_intensity,
-            self.snare_intensity * 0.85,
-            self.drop_intensity,
-        )
+            col_left = _scale_flash(self.peripheral_flash_color_left)
+            col_right = _scale_flash(self.peripheral_flash_color_right)
+            return col_left, col_right, True
 
-        # Inter-beat silence/decay gate: cut to pitch black between beats
-        if beat_int < 0.20:
-            return (0, 0, 0), (0, 0, 0), True
-
-        # Heavy bass drop: 100% full-blast phosphor white blast
-        if self.drop_intensity > 0.40:
-            return (255, 255, 255), (255, 255, 255), True
-
-        # Rhythm Flash: scale palette color to full 255 saturation
-        base_l = self.current_color
-        base_r = self.secondary_color if self.dual_scheme in (DUAL_SCHEME_CONTRAST, DUAL_SCHEME_ALTERNATING) else self.current_color
-
-        def _scale_flash(col):
-            r, g, b = col
-            max_c = max(r, g, b, 1)
-            scale = 255.0 / max_c
-            return (min(255, int(r * scale)), min(255, int(g * scale)), min(255, int(b * scale)))
-
-        col_left = _scale_flash(base_l)
-        col_right = _scale_flash(base_r)
-        return col_left, col_right, True
+        # Blackout between beats
+        return (0, 0, 0), (0, 0, 0), True
 
     def trigger_kick(self):
         """Trigger kick strobe flash & advance palette color with multi-pulse train."""
@@ -405,6 +392,15 @@ class VisualizerEngine:
             sec_idx = (self.color_step + len(self.palette_colors) // 2) % len(self.palette_colors)
             self.secondary_color = self.palette_colors[sec_idx]
 
+        # Arm peripheral flash for 80ms with full saturated palette color
+        self.peripheral_flash_until = time.perf_counter() + 0.080
+        self.peripheral_flash_color_left = self.current_color
+        self.peripheral_flash_color_right = (
+            self.secondary_color
+            if self.dual_scheme in (DUAL_SCHEME_CONTRAST, DUAL_SCHEME_ALTERNATING)
+            else self.current_color
+        )
+
     def trigger_snare(self):
         """Trigger snare/clap accent flash."""
         self.snare_intensity = 1.0
@@ -424,6 +420,11 @@ class VisualizerEngine:
         self.snare_intensity = 1.0
         self.kick_hold_timer = 0.060
         self.burst_remaining = 5  # 5-pulse machine-gun blast
+
+        # Massive bass drop: 90ms phosphor white blast
+        self.peripheral_flash_until = time.perf_counter() + 0.090
+        self.peripheral_flash_color_left = (255, 255, 255)
+        self.peripheral_flash_color_right = (255, 255, 255)
 
     def update(self, dt, audio_state):
         """Update strobe decay physics, burst pulse generator, and shake."""

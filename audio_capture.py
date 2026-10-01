@@ -63,18 +63,30 @@ class AudioCaptureManager:
             default_spk = sc.default_speaker()
             default_spk_name = default_spk.name if default_spk else ""
 
+            default_mic = None
+            try:
+                default_mic = sc.default_microphone()
+            except Exception:
+                pass
+            default_mic_name = default_mic.name if default_mic else ""
+
             default_loopback = None
             other_loopbacks = []
             physical_mics = []
 
             for mic in all_mics:
-                if mic.isloopback:
+                name_lower = mic.name.lower()
+                is_virtual = any(v in name_lower for v in ("blackhole", "loopback", "soundflower", "vb-cable", "virtual audio", "stereo mix"))
+                if mic.isloopback or is_virtual:
                     if default_spk_name and (default_spk_name in mic.name or mic.name in default_spk_name):
                         default_loopback = mic
                     else:
                         other_loopbacks.append(mic)
                 else:
-                    physical_mics.append(mic)
+                    if default_mic_name and (default_mic_name in mic.name or mic.name in default_mic_name):
+                        physical_mics.insert(0, mic)
+                    else:
+                        physical_mics.append(mic)
 
             sorted_devices = []
             if default_loopback:
@@ -84,7 +96,9 @@ class AudioCaptureManager:
 
             self.devices = sorted_devices
             for d in self.devices:
-                tag = "[System Audio]" if d.isloopback else "[Mic]"
+                name_lower = d.name.lower()
+                is_virtual = any(v in name_lower for v in ("blackhole", "loopback", "soundflower", "vb-cable", "virtual audio", "stereo mix"))
+                tag = "[System Audio]" if (d.isloopback or is_virtual) else "[Mic]"
                 clean_name = d.name.replace("Loopback ", "")
                 if len(clean_name) > 32:
                     clean_name = clean_name[:29] + "..."

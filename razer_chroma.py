@@ -10,7 +10,10 @@ import time
 import queue
 import threading
 import ctypes
-from ctypes import wintypes
+try:
+    from ctypes import wintypes
+except ImportError:
+    wintypes = None
 
 
 RAZER_VID = 0x1532
@@ -434,7 +437,8 @@ class RazerChromaManager:
                         buf_mode = bytearray(91)
                         buf_mode[1:] = rep_mode
                         self.hid.HidD_SetFeature(d.handle, (ctypes.c_char * 91).from_buffer(buf_mode), 91)
-                    self.kernel32.CloseHandle(d.handle)
+                    if self.kernel32:
+                        self.kernel32.CloseHandle(d.handle)
                 except Exception:
                     pass
             self.devices = []

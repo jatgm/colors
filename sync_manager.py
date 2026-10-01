@@ -42,28 +42,45 @@ class BluetoothScanner:
     def _scan_worker(self):
         found = []
         try:
-            cmd = [
-                "powershell",
-                "-NoProfile",
-                "-Command",
-                "Get-PnpDevice -Class Bluetooth | Select-Object FriendlyName, InstanceId",
-            ]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=8)
-            for line in res.stdout.splitlines():
-                m = re.search(r"DEV_([0-9A-Fa-f]{12})", line)
-                if m:
-                    raw_mac = m.group(1).upper()
-                    formatted_mac = ":".join(raw_mac[i:i + 2] for i in range(0, 12, 2))
-                    raw_name = line[:m.start()].strip()
-                    clean_name = raw_name.split("BTHENUM")[0].strip()
-                    if not clean_name:
-                        clean_name = "Bluetooth Host"
-                    if not any(d["mac"] == formatted_mac for d in found):
-                        found.append({
-                            "name": clean_name,
-                            "mac": formatted_mac,
-                            "type": "Bluetooth",
-                        })
+            if sys.platform == "win32":
+                cmd = [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    "Get-PnpDevice -Class Bluetooth | Select-Object FriendlyName, InstanceId",
+                ]
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=8)
+                for line in res.stdout.splitlines():
+                    m = re.search(r"DEV_([0-9A-Fa-f]{12})", line)
+                    if m:
+                        raw_mac = m.group(1).upper()
+                        formatted_mac = ":".join(raw_mac[i:i + 2] for i in range(0, 12, 2))
+                        raw_name = line[:m.start()].strip()
+                        clean_name = raw_name.split("BTHENUM")[0].strip()
+                        if not clean_name:
+                            clean_name = "Bluetooth Host"
+                        if not any(d["mac"] == formatted_mac for d in found):
+                            found.append({
+                                "name": clean_name,
+                                "mac": formatted_mac,
+                                "type": "Bluetooth",
+                            })
+            elif sys.platform == "darwin":
+                cmd = ["system_profiler", "-json", "SPBluetoothDataType"]
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=8)
+                if res.returncode == 0 and res.stdout.strip():
+                    data = json.loads(res.stdout)
+                    for item in data.get("SPBluetoothDataType", []):
+                        for section in ("device_connected", "device_not_connected"):
+                            for dev_dict in item.get(section, []):
+                                for name, props in dev_dict.items():
+                                    addr = props.get("device_address")
+                                    if addr and not any(d["mac"] == addr for d in found):
+                                        found.append({
+                                            "name": name,
+                                            "mac": addr,
+                                            "type": "Bluetooth",
+                                        })
         except Exception:
             pass
 
@@ -120,16 +137,31 @@ class SyncManager:
         self.threads = []
 
     def _detect_local_bt_mac(self):
-        """Detect local Bluetooth MAC address using RFCOMM bind."""
-        try:
-            s = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
-            s.bind((socket.BDADDR_ANY, BT_RFCOMM_CHANNEL))
-            mac = s.getsockname()[0]
-            s.close()
-            return mac
-        except Exception:
-            # Try without channel bind or query hostname
-            return "Bluetooth Available"
+        """Detect local Bluetooth MAC address using RFCOMM bind or system profiler."""
+        if hasattr(socket, "AF_BLUETOOTH") and hasattr(socket, "BTPROTO_RFCOMM"):
+            try:
+                s = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
+                s.bind((socket.BDADDR_ANY, BT_RFCOMM_CHANNEL))
+                mac = s.getsockname()[0]
+                s.close()
+                return mac
+            except Exception:
+                pass
+
+        if sys.platform == "darwin":
+            try:
+                cmd = ["system_profiler", "-json", "SPBluetoothDataType"]
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                if res.returncode == 0 and res.stdout.strip():
+                    data = json.loads(res.stdout)
+                    for item in data.get("SPBluetoothDataType", []):
+                        addr = item.get("controller_properties", {}).get("controller_address")
+                        if addr:
+                            return addr
+            except Exception:
+                pass
+
+        return "Bluetooth Available"
 
     def set_role(self, new_role):
         """Switch sync role between Standalone, Host, and Client."""
@@ -149,27 +181,30 @@ class SyncManager:
         self.connected_clients = []
         self.client_count = 0
 
-        # 1. Start Bluetooth RFCOMM Server (tries primary channel, then fallbacks)
-        try:
-            self.host_bt_sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
-            bound = False
-            for ch in [BT_RFCOMM_CHANNEL, 1, 2, 3, 5, 6, 7]:
-                try:
-                    self.host_bt_sock.bind((socket.BDADDR_ANY, ch))
-                    self.bt_channel = ch
-                    bound = True
-                    break
-                except Exception:
-                    continue
-            if bound:
-                self.host_bt_sock.listen(5)
-                t_bt = threading.Thread(target=self._host_bt_accept_worker, daemon=True)
-                t_bt.start()
-                self.threads.append(t_bt)
-            else:
-                self.host_bt_sock.close()
+        # 1. Start Bluetooth RFCOMM Server if supported on this OS
+        if hasattr(socket, "AF_BLUETOOTH") and hasattr(socket, "BTPROTO_RFCOMM"):
+            try:
+                self.host_bt_sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
+                bound = False
+                for ch in [BT_RFCOMM_CHANNEL, 1, 2, 3, 5, 6, 7]:
+                    try:
+                        self.host_bt_sock.bind((socket.BDADDR_ANY, ch))
+                        self.bt_channel = ch
+                        bound = True
+                        break
+                    except Exception:
+                        continue
+                if bound:
+                    self.host_bt_sock.listen(5)
+                    t_bt = threading.Thread(target=self._host_bt_accept_worker, daemon=True)
+                    t_bt.start()
+                    self.threads.append(t_bt)
+                else:
+                    self.host_bt_sock.close()
+                    self.host_bt_sock = None
+            except Exception:
                 self.host_bt_sock = None
-        except Exception:
+        else:
             self.host_bt_sock = None
 
         # 2. Start TCP Server (for LAN and fallback)
@@ -411,6 +446,9 @@ class SyncManager:
         sock = None
 
         if "Bluetooth" in addr_type:
+            if not hasattr(socket, "AF_BLUETOOTH"):
+                self.client_status = "Bluetooth sockets unavailable on macOS (use LAN/WiFi)"
+                return
             try:
                 sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
                 sock.settimeout(8.0)

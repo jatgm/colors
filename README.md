@@ -32,7 +32,12 @@ You can run Beat Strobe across multiple PCs / laptops in the same room or at a p
    ```bash
    pip install -r requirements.txt
    ```
-3. Launch with `run.bat` or `python main.py`.
+3. Launch:
+   - On **macOS / Linux**: `./run.sh`
+   - On **Windows**: `run.bat`
+   - Or directly: `python main.py`
+
+> **Note for macOS System Audio**: macOS does not have native system audio loopback in CoreAudio. Beat Strobe captures your physical microphone out-of-the-box. To capture desktop audio (Spotify, YouTube, etc.) directly, install a free virtual loopback driver such as [BlackHole 2ch](https://github.com/ExistentialAudio/BlackHole) (`brew install blackhole-2ch`); Beat Strobe will automatically detect and prioritize it as `[System Audio]`.
 
 ---
 

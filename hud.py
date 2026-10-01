@@ -609,7 +609,7 @@ class HUD:
                 f"⚡ Connected Synced Clients: {sync_mgr.client_count} computer(s)",
                 "",
                 "How to connect other computers:",
-                f" • Via Bluetooth: Pair PCs in Windows or search for '{sync_mgr.hostname}' ({sync_mgr.local_bt_mac}).",
+                f" • Via Bluetooth: Pair devices or search for '{sync_mgr.hostname}' ({sync_mgr.local_bt_mac}).",
                 f" • Via Wi-Fi/LAN: Connect to the same router or enter IP '{sync_mgr.local_ip}'.",
             ]
             for i, line in enumerate(info_lines):

@@ -357,17 +357,17 @@ class RazerChromaManager:
             b_left = self._boost_peripheral_color(c_left)
             b_right = self._boost_peripheral_color(c_right)
 
-            # Pre-build packet buffers:
+            # Pre-build packet buffers using VARSTORE (0x01):
             # cmd 0x0F / 0x02: Extended matrix static color
-            # Keyboard backlight (0x05) maps to left/primary channel
-            args_kbd = bytearray([0x00, 0x05, 0x01, 0x00, 0x00, 0x01, b_left[0], b_left[1], b_left[2]])
-            rep_kbd = _create_razer_report(0x0F, 0x02, 0x09, args_kbd, txn=0x3F)
+            # Keyboard backlight (0x05) uses txn 0x1F
+            args_kbd = bytearray([0x01, 0x05, 0x01, 0x00, 0x00, 0x01, b_left[0], b_left[1], b_left[2]])
+            rep_kbd = _create_razer_report(0x0F, 0x02, 0x09, args_kbd, txn=0x1F)
             buf_kbd = bytearray(91)
             buf_kbd[1:] = rep_kbd
             cbuf_kbd = (ctypes.c_char * 91).from_buffer(buf_kbd)
 
-            # Mouse logo (0x04) maps to right channel
-            args_mouse_logo = bytearray([0x00, 0x04, 0x01, 0x00, 0x00, 0x01, b_right[0], b_right[1], b_right[2]])
+            # Mouse logo (0x04) uses txn 0x3F
+            args_mouse_logo = bytearray([0x01, 0x04, 0x01, 0x00, 0x00, 0x01, b_right[0], b_right[1], b_right[2]])
             rep_mouse_logo = _create_razer_report(0x0F, 0x02, 0x09, args_mouse_logo, txn=0x3F)
             buf_mouse_logo = bytearray(91)
             buf_mouse_logo[1:] = rep_mouse_logo
@@ -384,7 +384,7 @@ class RazerChromaManager:
                         self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_logo, 91)
                         if getattr(dev, "has_scroll_wheel", False):
                             if cbuf_mouse_wheel is None:
-                                args_sw = bytearray([0x00, 0x01, 0x01, 0x00, 0x00, 0x01, b_right[0], b_right[1], b_right[2]])
+                                args_sw = bytearray([0x01, 0x01, 0x01, 0x00, 0x00, 0x01, b_right[0], b_right[1], b_right[2]])
                                 rep_sw = _create_razer_report(0x0F, 0x02, 0x09, args_sw, txn=0x3F)
                                 buf_sw = bytearray(91)
                                 buf_sw[1:] = rep_sw

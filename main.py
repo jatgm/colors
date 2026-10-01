@@ -269,9 +269,10 @@ class BeatStrobeApp:
                 )
 
                 # 5. Razer Chroma Peripheral Hardware Sync (Keyboard & Mouse)
+                # Synchronize both keyboard and mouse to the primary strobe color
                 self.razer_mgr.set_colors(
                     self.visualizer.last_render_rgb_0,
-                    self.visualizer.last_render_rgb_1,
+                    self.visualizer.last_render_rgb_0,
                 )
 
                 # 6. Broadcast to connected clients (Host only)

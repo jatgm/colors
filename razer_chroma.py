@@ -292,39 +292,16 @@ class RazerChromaManager:
             except Exception:
                 pass
 
-    def _boost_peripheral_color(self, rgb, strobe_cut=True):
-        """High-contrast stroboscopic expander for Razer RGB LEDs.
-        Cuts low ambient levels to true pitch black (0, 0, 0) and amplifies
-        beat peaks to full-blast 255 brightness with phosphor punch.
-        """
+    def _boost_peripheral_color(self, rgb, strobe_cut=False):
+        """Color booster for physical Razer RGB LEDs during smooth rave modes."""
         r, g, b = rgb
         max_c = max(r, g, b)
         if max_c <= 0:
             return (0, 0, 0)
-
-        # Strobe Cut Gate: below 52 is ambient floor / quiet -> cut to PURE BLACK (0, 0, 0)
-        # This creates the sharp on/off stroboscopic contrast in sync with the screen
-        if strobe_cut and max_c <= 52:
-            return (0, 0, 0)
-
-        # Beat Flash Expansion: stretch active flashes to maximum 255 power
-        norm = max(0.0, min(1.0, (max_c - 52) / (255 - 52))) if strobe_cut else (max_c / 255.0)
-        target_max = 135 + int(norm * 120)  # 135 to 255
+        norm = max_c / 255.0
+        target_max = 60 + int(norm * 195)
         scale = target_max / max(1, max_c)
-
-        br = min(255, int(r * scale))
-        bg = min(255, int(g * scale))
-        bb = min(255, int(b * scale))
-
-        # Add phosphor white core to all channels on hard beats
-        # Lighting all 3 diodes (R, G, B) simultaneously maximizes total physical lumen output
-        if norm > 0.60:
-            punch = int(50 * (norm - 0.60) / 0.40)
-            br = min(255, br + punch)
-            bg = min(255, bg + punch)
-            bb = min(255, bb + punch)
-
-        return (br, bg, bb)
+        return (min(255, int(r * scale)), min(255, int(g * scale)), min(255, int(b * scale)))
 
     def set_colors(self, rgb_left, rgb_right=None, strobe_cut=True):
         """Push target colors to Razer hardware (non-blocking, freshest frame only)."""
@@ -354,25 +331,39 @@ class RazerChromaManager:
 
         while self.running:
             try:
-                item = self.color_queue.get(timeout=0.020)
+                item = self.color_queue.get(timeout=0.015)
             except queue.Empty:
-                continue
+                # If timeout occurred while holding a flash, check if hold timer expired
+                if flash_until_time > 0 and time.perf_counter() >= flash_until_time:
+                    flash_until_time = 0.0
+                    b_left, b_right = (0, 0, 0), (0, 0, 0)
+                else:
+                    continue
+            else:
+                c_left, c_right, strobe_cut = item
+                now = time.perf_counter()
 
-            c_left, c_right, strobe_cut = item
-
-            # Apply high-contrast strobe boost and true blackout gate
-            b_left = self._boost_peripheral_color(c_left, strobe_cut=strobe_cut)
-            b_right = self._boost_peripheral_color(c_right, strobe_cut=strobe_cut)
-
-            now = time.perf_counter()
-
-            # Enforce 45ms minimum flash duration so ultra-fast screen flashes are fully visible to the human eye
-            if b_left != (0, 0, 0) or b_right != (0, 0, 0):
-                flash_until_time = now + 0.045
-            elif now < flash_until_time:
-                # Keep holding previous flash color until the hold timer expires
-                b_left = last_sent_left or b_left
-                b_right = last_sent_right or b_right
+                if strobe_cut:
+                    is_flash = (c_left != (0, 0, 0) or c_right != (0, 0, 0))
+                    if is_flash:
+                        if now >= flash_until_time:
+                            # Latch fresh peak flash for 70ms for maximum retinal brilliance
+                            flash_until_time = now + 0.070
+                            b_left, b_right = c_left, c_right
+                        else:
+                            # Keep holding current flash peak
+                            continue
+                    else:
+                        if now < flash_until_time:
+                            # Keep holding flash peak until hold duration elapses
+                            continue
+                        flash_until_time = 0.0
+                        b_left, b_right = (0, 0, 0), (0, 0, 0)
+                else:
+                    # Smooth rave pulsing mode (Safe Mode or Smooth Rave Pulse)
+                    flash_until_time = 0.0
+                    b_left = self._boost_peripheral_color(c_left, strobe_cut=False)
+                    b_right = self._boost_peripheral_color(c_right, strobe_cut=False)
 
             if b_left == last_sent_left and b_right == last_sent_right:
                 continue

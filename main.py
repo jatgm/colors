@@ -270,13 +270,9 @@ class BeatStrobeApp:
                 )
 
                 # 5. Razer Chroma Peripheral Hardware Sync (Keyboard & Mouse)
-                # Synchronize both keyboard and mouse to the primary strobe color with snappy on/off cut
-                is_strobe_mode = not (self.visualizer.safe_mode or self.visualizer.mode == MODE_SMOOTH_PULSE)
-                self.razer_mgr.set_colors(
-                    self.visualizer.last_render_rgb_0,
-                    self.visualizer.last_render_rgb_0,
-                    strobe_cut=is_strobe_mode,
-                )
+                # Synchronize both keyboard and mouse with explosive beat flashes and true blackouts
+                col_left, col_right, is_strobe = self.visualizer.get_peripheral_colors()
+                self.razer_mgr.set_colors(col_left, col_right, strobe_cut=is_strobe)
 
                 # 6. Broadcast to connected clients (Host only)
                 if is_host:

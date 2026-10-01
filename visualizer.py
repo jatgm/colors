@@ -317,6 +317,65 @@ class VisualizerEngine:
         self.last_eff_intensity_0 *= factor
         self.last_eff_intensity_1 *= factor
 
+    def get_peripheral_colors(self):
+        """Calculate exact synchronized peripheral RGB colors for Razer hardware.
+        Returns ((r_left, g_left, b_left), (r_right, g_right, b_right), is_strobe_mode).
+        In strobe modes: delivers 100% full-blast 255 peak color on beat impacts
+        and absolute pitch black (0, 0, 0) during inter-beat intervals.
+        In smooth modes: delivers smooth pulsing rave colors.
+        """
+        is_strobe = not (self.safe_mode or self.mode == MODE_SMOOTH_PULSE)
+        if not is_strobe:
+            return self.last_render_rgb_0, self.last_render_rgb_1, False
+
+        # If Martin Atomic burst strobe is in blackout micro-phase, cut to pitch black
+        if self.burst_remaining > 0 and not self.burst_is_on:
+            return (0, 0, 0), (0, 0, 0), True
+
+        # Active beat strobe intensity
+        beat_int = max(
+            self.kick_intensity,
+            self.snare_intensity,
+            self.drop_intensity,
+            self.hihat_intensity * 0.75,
+        )
+
+        # Inter-beat silence/decay gate: cut to pitch black between beats
+        if beat_int < 0.12:
+            return (0, 0, 0), (0, 0, 0), True
+
+        # Drop: 100% full-blast phosphor white blast
+        if self.drop_intensity > 0.20:
+            return (255, 255, 255), (255, 255, 255), True
+
+        # Snare / Clap: crisp white accent flash
+        if self.snare_intensity > 0.40:
+            w_val = min(255, int(200 + 55 * self.snare_intensity))
+            return (w_val, w_val, w_val), (w_val, w_val, w_val), True
+
+        # Kick / Rhythm Flash: scale palette color to full 255 power
+        base_l = self.current_color
+        base_r = self.secondary_color if self.dual_scheme in (DUAL_SCHEME_CONTRAST, DUAL_SCHEME_ALTERNATING) else self.current_color
+
+        def _scale_flash(col, intensity):
+            r, g, b = col
+            max_c = max(r, g, b, 1)
+            scale = 255.0 / max_c
+            sr = min(255, int(r * scale))
+            sg = min(255, int(g * scale))
+            sb = min(255, int(b * scale))
+            # Phosphor punch on hard impacts (>0.60): light all 3 diodes to maximize lumens
+            if intensity > 0.60:
+                punch = int(55 * (intensity - 0.60) / 0.40)
+                sr = min(255, sr + punch)
+                sg = min(255, sg + punch)
+                sb = min(255, sb + punch)
+            return (sr, sg, sb)
+
+        col_left = _scale_flash(base_l, beat_int)
+        col_right = _scale_flash(base_r, beat_int)
+        return col_left, col_right, True
+
     def trigger_kick(self):
         """Trigger kick strobe flash & advance palette color with multi-pulse train."""
         self.kick_intensity = 1.0
@@ -465,18 +524,25 @@ class VisualizerEngine:
         if self.safe_mode or self.mode == MODE_SMOOTH_PULSE:
             eff_intensity = math.sin(min(1.0, 0.20 + ambient_floor * 0.40 + chopped_intensity * 0.80) * (math.pi / 2))
         elif self.mode == MODE_PSYCHO_OVERDRIVE:
-            # Overdrive blast: high-energy flash atop live reactive ambient floor
+            # Overdrive blast: explosive flash with true pitch black between beat impacts
             if chopped_intensity > 0.01:
-                eff_intensity = min(1.0, ambient_floor * 0.35 + chopped_intensity * 1.15)
+                eff_intensity = min(1.0, chopped_intensity * 1.35)
             else:
-                eff_intensity = ambient_floor if self.burst_remaining <= 0 else 0.0
+                eff_intensity = (idle_breath * 0.35) if music_energy < 0.03 else 0.0
         elif self.mode == MODE_HARD_STROBE:
-            # Classic concert strobe: deep contrast with subtle ambient floor
-            eff_intensity = max(idle_breath * 0.5, chopped_intensity)
+            # Classic concert strobe: deep contrast with pitch black between beats
+            if chopped_intensity > 0.01:
+                eff_intensity = min(1.0, chopped_intensity * 1.20)
+            else:
+                eff_intensity = (idle_breath * 0.25) if music_energy < 0.03 else 0.0
         elif self.mode == MODE_SPECTRUM:
             eff_intensity = max(0.18, min(1.0, 0.22 + audio_state.get("total_level", 0.0) * 0.45 + chopped_intensity * 0.65))
         else:
-            eff_intensity = max(ambient_floor, chopped_intensity)
+            # Strobe Blitz, Machine Gun, Chaos Blitz, Monochrome, Dual Strobe
+            if chopped_intensity > 0.01:
+                eff_intensity = min(1.0, chopped_intensity * 1.25)
+            else:
+                eff_intensity = (idle_breath * 0.30) if music_energy < 0.03 else 0.0
 
         # Perceptual gamma scaling so colors stay vivid, luminous, and rich
         gamma_intensity = min(1.0, eff_intensity ** 0.72)

@@ -292,25 +292,41 @@ class RazerChromaManager:
             except Exception:
                 pass
 
-    def _boost_peripheral_color(self, rgb):
-        """Boost contrast and minimum visibility floor for keycaps and light diffusers."""
+    def _boost_peripheral_color(self, rgb, strobe_cut=True):
+        """High-contrast stroboscopic expander for Razer RGB LEDs.
+        Cuts low ambient levels to true pitch black (0, 0, 0) and amplifies
+        beat peaks to full-blast 255 brightness with phosphor punch.
+        """
         r, g, b = rgb
         max_c = max(r, g, b)
         if max_c <= 0:
             return (0, 0, 0)
-        # Apply perceptual boost: if color is soft, lift it so LEDs visibly illuminate
-        # If it's a hard beat (>180), keep full blast
-        if max_c < 65:
-            # Gentle ambient music lift (minimum 28-35 on dominant channel)
-            scale = max(1.2, min(2.5, 32.0 / max(1, max_c)))
-        else:
-            scale = 1.15
+
+        # Strobe Cut Gate: below 52 is ambient floor / quiet -> cut to PURE BLACK (0, 0, 0)
+        # This creates the sharp on/off stroboscopic contrast in sync with the screen
+        if strobe_cut and max_c <= 52:
+            return (0, 0, 0)
+
+        # Beat Flash Expansion: stretch active flashes to maximum 255 power
+        norm = max(0.0, min(1.0, (max_c - 52) / (255 - 52))) if strobe_cut else (max_c / 255.0)
+        target_max = 135 + int(norm * 120)  # 135 to 255
+        scale = target_max / max(1, max_c)
+
         br = min(255, int(r * scale))
         bg = min(255, int(g * scale))
         bb = min(255, int(b * scale))
+
+        # Add phosphor white core to all channels on hard beats
+        # Lighting all 3 diodes (R, G, B) simultaneously maximizes total physical lumen output
+        if norm > 0.60:
+            punch = int(50 * (norm - 0.60) / 0.40)
+            br = min(255, br + punch)
+            bg = min(255, bg + punch)
+            bb = min(255, bb + punch)
+
         return (br, bg, bb)
 
-    def set_colors(self, rgb_left, rgb_right=None):
+    def set_colors(self, rgb_left, rgb_right=None, strobe_cut=True):
         """Push target colors to Razer hardware (non-blocking, freshest frame only)."""
         if not self.enabled or not self.devices:
             return
@@ -326,36 +342,48 @@ class RazerChromaManager:
             pass
 
         try:
-            self.color_queue.put_nowait((c_left, c_right))
+            self.color_queue.put_nowait((c_left, c_right, strobe_cut))
         except queue.Full:
             pass
 
     def _worker_loop(self):
         """Asynchronous worker loop sending 91-byte USB HID feature reports."""
-        last_left = None
-        last_right = None
+        last_sent_left = None
+        last_sent_right = None
+        flash_until_time = 0.0
 
         while self.running:
             try:
-                item = self.color_queue.get(timeout=0.035)
+                item = self.color_queue.get(timeout=0.020)
             except queue.Empty:
                 continue
 
-            c_left, c_right = item
-            if c_left == last_left and c_right == last_right:
+            c_left, c_right, strobe_cut = item
+
+            # Apply high-contrast strobe boost and true blackout gate
+            b_left = self._boost_peripheral_color(c_left, strobe_cut=strobe_cut)
+            b_right = self._boost_peripheral_color(c_right, strobe_cut=strobe_cut)
+
+            now = time.perf_counter()
+
+            # Enforce 45ms minimum flash duration so ultra-fast screen flashes are fully visible to the human eye
+            if b_left != (0, 0, 0) or b_right != (0, 0, 0):
+                flash_until_time = now + 0.045
+            elif now < flash_until_time:
+                # Keep holding previous flash color until the hold timer expires
+                b_left = last_sent_left or b_left
+                b_right = last_sent_right or b_right
+
+            if b_left == last_sent_left and b_right == last_sent_right:
                 continue
-            last_left = c_left
-            last_right = c_right
+            last_sent_left = b_left
+            last_sent_right = b_right
 
             with self.lock:
                 devs = list(self.devices)
 
             if not devs or not self.enabled:
                 continue
-
-            # Boost colors for physical LED keycaps & lightbars
-            b_left = self._boost_peripheral_color(c_left)
-            b_right = self._boost_peripheral_color(c_right)
 
             # Pre-build packet buffers using VARSTORE (0x01):
             # cmd 0x0F / 0x02: Extended matrix static color

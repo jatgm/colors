@@ -16,6 +16,7 @@ from config import (
     MAX_DECAY_RATE,
     MIN_PREAMP_GAIN,
     MAX_PREAMP_GAIN,
+    MODE_SMOOTH_PULSE,
 )
 from audio_capture import AudioCaptureManager
 from visualizer import VisualizerEngine
@@ -269,10 +270,12 @@ class BeatStrobeApp:
                 )
 
                 # 5. Razer Chroma Peripheral Hardware Sync (Keyboard & Mouse)
-                # Synchronize both keyboard and mouse to the primary strobe color
+                # Synchronize both keyboard and mouse to the primary strobe color with snappy on/off cut
+                is_strobe_mode = not (self.visualizer.safe_mode or self.visualizer.mode == MODE_SMOOTH_PULSE)
                 self.razer_mgr.set_colors(
                     self.visualizer.last_render_rgb_0,
                     self.visualizer.last_render_rgb_0,
+                    strobe_cut=is_strobe_mode,
                 )
 
                 # 6. Broadcast to connected clients (Host only)

@@ -25,6 +25,7 @@ from display_manager import DisplayManager
 from sync_manager import SyncManager, ROLE_STANDALONE, ROLE_HOST, ROLE_CLIENT
 from razer_chroma import RazerChromaManager
 from happylighting import HappyLightingManager
+from lenovo_legion import LenovoLegionManager
 
 
 class BeatStrobeApp:
@@ -45,6 +46,7 @@ class BeatStrobeApp:
         self.sync_mgr = SyncManager()
         self.razer_mgr = RazerChromaManager()
         self.happylighting_mgr = HappyLightingManager()
+        self.lenovo_mgr = LenovoLegionManager()
 
         # Engage Crazy Overdrive Mode by default for maximum strobe intensity!
         self.audio_mgr.set_overdrive(True)
@@ -153,6 +155,9 @@ class BeatStrobeApp:
                         elif event.key == pygame.K_l:
                             # Toggle HappyLighting Room Lighting
                             self.happylighting_mgr.toggle_enabled()
+                        elif event.key == pygame.K_k:
+                            # Toggle Lenovo Legion Gaming Desktop RGB Lighting
+                            self.lenovo_mgr.toggle_enabled()
                         elif event.key == pygame.K_n:
                             self.hud.toggle_sync_modal()
                         elif event.key in (pygame.K_f, pygame.K_F11) or (event.key == pygame.K_RETURN and (event.mod & pygame.KMOD_ALT)):
@@ -208,6 +213,7 @@ class BeatStrobeApp:
                                 self.on_display_mode_change,
                                 self.razer_mgr,
                                 self.happylighting_mgr,
+                                self.lenovo_mgr,
                             )
                             if not consumed and is_double and not self.hud.show_sync_modal:
                                 self.cycle_display_mode()
@@ -275,11 +281,12 @@ class BeatStrobeApp:
                     self.screen, audio_state, self.display_mgr.monitors, self.is_dual, is_client_sync=is_client
                 )
 
-                # 5. Razer Chroma & HappyLighting Room Peripheral Hardware Sync
-                # Synchronize keyboard, mouse, and Bluetooth room LED strips with explosive beat flashes and true blackouts
+                # 5. Razer Chroma, HappyLighting & Lenovo Legion Hardware Sync
+                # Synchronize keyboard, mouse, room strips, and gaming PC RGB with explosive beat flashes and blackouts
                 col_left, col_right, is_strobe = self.visualizer.get_peripheral_colors()
                 self.razer_mgr.set_colors(col_left, col_right, strobe_cut=is_strobe)
                 self.happylighting_mgr.set_colors(col_left, strobe_cut=is_strobe)
+                self.lenovo_mgr.set_colors(col_left, strobe_cut=is_strobe)
 
                 # 6. Broadcast to connected clients (Host only)
                 if is_host:
@@ -306,6 +313,7 @@ class BeatStrobeApp:
                     self.is_dual,
                     self.razer_mgr,
                     self.happylighting_mgr,
+                    self.lenovo_mgr,
                 )
 
                 # 8. Display swap & frame cap
@@ -313,6 +321,7 @@ class BeatStrobeApp:
                 self.clock.tick(FPS_CAP)
 
         finally:
+            self.lenovo_mgr.stop()
             self.happylighting_mgr.stop()
             self.razer_mgr.stop()
             self.audio_mgr.stop()

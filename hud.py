@@ -161,17 +161,18 @@ class HUD:
         self.btn_style = pygame.Rect(panel_x + 30 + bw * 2, by, bw, 32)
         self.btn_device = pygame.Rect(panel_x + 40 + bw * 3, by, bw, 32)
 
-        # Button row 2 (Displays, Dual FX, Sync Panel, Crazy Mode, Razer RGB, Safe Mode)
-        bw2 = (panel_w - 70) // 6
+        # Button row 2 (Displays, Dual FX, Sync Panel, Crazy Mode, Razer RGB, Room Lights, Safe Mode)
+        bw2 = (panel_w - 80) // 7
         by2 = by + 38
         self.btn_displays = pygame.Rect(panel_x + 10, by2, bw2, 32)
         self.btn_dualfx = pygame.Rect(panel_x + 20 + bw2, by2, bw2, 32)
         self.btn_sync = pygame.Rect(panel_x + 30 + bw2 * 2, by2, bw2, 32)
         self.btn_overdrive = pygame.Rect(panel_x + 40 + bw2 * 3, by2, bw2, 32)
         self.btn_razer = pygame.Rect(panel_x + 50 + bw2 * 4, by2, bw2, 32)
-        self.btn_safe = pygame.Rect(panel_x + 60 + bw2 * 5, by2, bw2, 32)
+        self.btn_room_lights = pygame.Rect(panel_x + 60 + bw2 * 5, by2, bw2, 32)
+        self.btn_safe = pygame.Rect(panel_x + 70 + bw2 * 6, by2, bw2, 32)
 
-    def handle_mouse_down(self, pos, audio_mgr, visualizer, display_mgr, sync_mgr, on_display_change, razer_mgr=None):
+    def handle_mouse_down(self, pos, audio_mgr, visualizer, display_mgr, sync_mgr, on_display_change, razer_mgr=None, happylighting_mgr=None):
         self.notify_interaction()
 
         # Warning Dialog
@@ -304,6 +305,10 @@ class HUD:
             if razer_mgr is not None:
                 razer_mgr.toggle_enabled()
             return True
+        elif self.btn_room_lights.collidepoint(pos):
+            if happylighting_mgr is not None:
+                happylighting_mgr.toggle_enabled()
+            return True
         elif self.btn_safe.collidepoint(pos):
             visualizer.toggle_safe_mode()
             audio_mgr.set_overdrive(visualizer.overdrive_mode)
@@ -344,7 +349,7 @@ class HUD:
         elif self.alpha > target_alpha:
             self.alpha = max(0.0, self.alpha - HUD_FADE_SPEED * 255.0 * dt)
 
-    def render(self, screen, audio_mgr, visualizer, display_mgr, sync_mgr, audio_state, is_dual, razer_mgr=None):
+    def render(self, screen, audio_mgr, visualizer, display_mgr, sync_mgr, audio_state, is_dual, razer_mgr=None, happylighting_mgr=None):
         if not self.warning_dismissed:
             self._render_warning_dialog(screen)
             return
@@ -381,7 +386,13 @@ class HUD:
         rz_status = ""
         if razer_mgr and razer_mgr.device_count > 0:
             rz_status = f" | 🐍 Razer: {razer_mgr.device_count}" if razer_mgr.enabled else " | 🐍 Razer: Off"
-        diag_str = f"In: {int(raw_p * 100)}% (AGC: {agc_g:.1f}x){rz_status}"
+        hl_status = ""
+        if happylighting_mgr:
+            if happylighting_mgr.connected:
+                hl_status = f" | 💡 Room: ON" if happylighting_mgr.enabled else " | 💡 Room: Off"
+            elif happylighting_mgr.enabled:
+                hl_status = " | 💡 Room: Connecting..."
+        diag_str = f"In: {int(raw_p * 100)}% (AGC: {agc_g:.1f}x){rz_status}{hl_status}"
 
         if sync_mgr.role == ROLE_CLIENT:
             lat = sync_mgr.client_latency_ms
@@ -531,12 +542,32 @@ class HUD:
             rz_border = (60, 70, 85)
         self._render_button(hud_surf, self.btn_razer, rz_tag, rz_bg, rz_border, alpha_int)
 
+        # Room Lights (HappyLighting BLE) Button
+        if happylighting_mgr:
+            if happylighting_mgr.connected:
+                hl_tag = "💡 Room: ON" if happylighting_mgr.enabled else "💡 Room: OFF"
+                hl_bg = (10, 50, 60) if happylighting_mgr.enabled else (30, 35, 55)
+                hl_border = (0, 240, 255) if happylighting_mgr.enabled else (70, 90, 100)
+            elif happylighting_mgr.enabled:
+                hl_tag = "💡 Room: Syncing"
+                hl_bg = (50, 45, 20)
+                hl_border = (255, 220, 0)
+            else:
+                hl_tag = "💡 Room: Disabled"
+                hl_bg = (25, 28, 40)
+                hl_border = (60, 70, 85)
+        else:
+            hl_tag = "💡 Room: N/A"
+            hl_bg = (25, 28, 40)
+            hl_border = (60, 70, 85)
+        self._render_button(hud_surf, self.btn_room_lights, hl_tag, hl_bg, hl_border, alpha_int)
+
         safe_tag = "Safe: ON" if visualizer.safe_mode else "Safe: OFF"
         safe_bg = (20, 60, 40) if visualizer.safe_mode else (30, 35, 55)
         self._render_button(hud_surf, self.btn_safe, safe_tag, safe_bg, (100, 255, 150), alpha_int)
 
         # Hotkey Footer
-        hints = "Hotkeys: [ESC] Exit  [X] 🔥 CRAZY  [C] 🐍 Razer  [F/F11] Displays  [B] Dual FX  [N] Sync  [M] Mode  [P] Palette  [S] Safe  [H] Hide"
+        hints = "Hotkeys: [ESC] Exit  [X] 🔥 CRAZY  [C] 🐍 Razer  [L] 💡 Lights  [F/F11] Displays  [B] Dual FX  [N] Sync  [M] Mode  [P] Palette  [S] Safe  [H] Hide"
         hint_surf = self.font_small.render(hints, True, (140, 145, 165))
         hud_surf.blit(hint_surf, (panel.x + (panel.width - hint_surf.get_width()) // 2, panel.y + panel.height - 24))
 

@@ -132,6 +132,78 @@ class TestHardwareSyncWithAlbumArt(unittest.TestCase):
             time.sleep(0.02)
         self.assertTrue(self.lenovo.running)
 
+    def test_lenovo_legion_dual_protocol_preallocation(self):
+        """Verify dual-protocol hardware headers (0x20..0x27) and ARGB streams (0x58, 0x59) are pre-allocated."""
+        from lenovo_legion import ALL_IT8297_HEADERS, IT8297_HDR_ARGB1, IT8297_HDR_ARGB2, CMD_APPLY_GLOBAL
+        # Headers 0x20..0x27
+        self.assertEqual(len(self.lenovo.ite_effect_pkts), 8)
+        for hdr in ALL_IT8297_HEADERS:
+            self.assertIn(hdr, self.lenovo.ite_effect_pkts)
+            pe = self.lenovo.ite_effect_pkts[hdr]
+            self.assertEqual(pe.report_id, 0xCC)
+            self.assertEqual(pe.header, hdr)
+            self.assertEqual(pe.zone0, 1 << (hdr - 0x20))
+
+        # ARGB Streams 0x58 and 0x59
+        self.assertIn(IT8297_HDR_ARGB1, self.lenovo.ite_argb_pkts)
+        self.assertIn(IT8297_HDR_ARGB2, self.lenovo.ite_argb_pkts)
+        pr1 = self.lenovo.ite_argb_pkts[IT8297_HDR_ARGB1]
+        self.assertEqual(len(pr1.leds), 19)
+        self.assertEqual(pr1.bcount, 19 * 3)
+
+        # Global Apply packet
+        self.assertIsNotNone(self.lenovo.apply_global_buf)
+        self.assertEqual(self.lenovo.apply_global_buf[0], 0xCC)
+        self.assertEqual(self.lenovo.apply_global_buf[1], 0x28)
+        self.assertEqual(self.lenovo.apply_global_buf[2], CMD_APPLY_GLOBAL)
+
+        # Startup sequence
+        self.assertEqual(len(self.lenovo.startup_bufs), 6)
+
+    def test_lenovo_legion_dual_protocol_strobe_and_blackout_state(self):
+        """Verify dual-protocol packets reflect beat flashes and instantaneous true blackout cuts."""
+        from lenovo_legion import (
+            EFFECT_STATIC,
+            EFFECT_OFF,
+            IT8297_HDR_BACK_IO,
+            IT8297_HDR_ARGB1,
+            IT8297_HDR_ARGB2,
+            LENOVO_LOGO_BLUE,
+        )
+        # 1. Beat strobe flash
+        self.lenovo.set_colors((255, 50, 0), (0, 180, 255), strobe_cut=True)
+        time.sleep(0.05)
+
+        # Verify IT8297 PktEffect headers
+        for hdr, pe in self.lenovo.ite_effect_pkts.items():
+            self.assertEqual(pe.effect_type, EFFECT_STATIC)
+            self.assertEqual(pe.max_brightness, 100)
+            if hdr == IT8297_HDR_BACK_IO:
+                expected_bgr = 255 | (141 << 8) | (21 << 16)
+                self.assertEqual(pe.color0, expected_bgr)
+
+        # Verify ARGB Fan frames
+        pr1 = self.lenovo.ite_argb_pkts[IT8297_HDR_ARGB1]
+        for i in range(19):
+            self.assertEqual((pr1.leds[i].r, pr1.leds[i].g, pr1.leds[i].b), (255, 50, 0))
+
+        pr2 = self.lenovo.ite_argb_pkts[IT8297_HDR_ARGB2]
+        for i in range(19):
+            self.assertEqual((pr2.leds[i].r, pr2.leds[i].g, pr2.leds[i].b), (0, 180, 255))
+
+        # 2. Hard blackout cut
+        self.lenovo.set_colors((0, 0, 0), (0, 0, 0), strobe_cut=True)
+        time.sleep(0.05)
+
+        for hdr, pe in self.lenovo.ite_effect_pkts.items():
+            self.assertEqual(pe.effect_type, EFFECT_OFF)
+            self.assertEqual(pe.max_brightness, 0)
+            self.assertEqual(pe.color0, 0)
+
+        for i in range(19):
+            self.assertEqual((pr1.leds[i].r, pr1.leds[i].g, pr1.leds[i].b), (0, 0, 0))
+            self.assertEqual((pr2.leds[i].r, pr2.leds[i].g, pr2.leds[i].b), (0, 0, 0))
+
     def test_peripherals_blackout_when_audio_silent(self):
         """Verify peripherals are true pitch black (0, 0, 0) when audio is silent."""
         # 1. Provide silent audio state

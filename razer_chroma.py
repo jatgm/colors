@@ -254,7 +254,7 @@ class RazerChromaManager:
             self._configure_devices()
 
     def _configure_devices(self):
-        """Set all Razer devices to Normal Mode (0x00) and 100% hardware brightness (0xFF)."""
+        """Set all Razer devices to Normal Mode (0x00), maximum hardware brightness, and initial blackout."""
         if not self.hid:
             return
         # 1. Normal Mode (0x00, 0x00): Ensures physical volume wheel and media keys (Play/Pause/Skip)
@@ -264,25 +264,39 @@ class RazerChromaManager:
         buf_mode[1:] = rep_mode
         cbuf_mode = (ctypes.c_char * 91).from_buffer(buf_mode)
 
-        # 2. Maximum Brightness: Extended matrix brightness (0x0F, 0x04) + Legacy fallback (0x03, 0x03)
-        rep_ext_bright = _create_razer_report(0x0F, 0x04, 0x03, [0x00, 0x00, 0xFF], txn=0x3F)
-        buf_ext_bright = bytearray(91)
-        buf_ext_bright[1:] = rep_ext_bright
-        cbuf_ext_bright = (ctypes.c_char * 91).from_buffer(buf_ext_bright)
+        # 2. Maximum Brightness:
+        # Keyboard backlight brightness (0x0F, 0x04, 0x03) with txn 0x1F (BACKLIGHT_LED = 0x05)
+        rep_kbd_bright = _create_razer_report(0x0F, 0x04, 0x03, [0x01, 0x05, 0xFF], txn=0x1F)
+        buf_kbd_bright = bytearray(91); buf_kbd_bright[1:] = rep_kbd_bright
+        cbuf_kbd_bright = (ctypes.c_char * 91).from_buffer(buf_kbd_bright)
 
+        # Mouse logo brightness (0x0F, 0x04, 0x03) with txn 0x3F (LOGO_LED = 0x04)
+        rep_mouse_bright = _create_razer_report(0x0F, 0x04, 0x03, [0x01, 0x04, 0xFF], txn=0x3F)
+        buf_mouse_bright = bytearray(91); buf_mouse_bright[1:] = rep_mouse_bright
+        cbuf_mouse_bright = (ctypes.c_char * 91).from_buffer(buf_mouse_bright)
+
+        # Mouse scroll wheel brightness (0x0F, 0x04, 0x03) with txn 0x3F (SCROLL_WHEEL_LED = 0x01)
+        rep_sw_bright = _create_razer_report(0x0F, 0x04, 0x03, [0x01, 0x01, 0xFF], txn=0x3F)
+        buf_sw_bright = bytearray(91); buf_sw_bright[1:] = rep_sw_bright
+        cbuf_sw_bright = (ctypes.c_char * 91).from_buffer(buf_sw_bright)
+
+        # Legacy fallback brightness
         rep_leg_bright = _create_razer_report(0x03, 0x03, 0x03, [0x00, 0x00, 0xFF], txn=0x3F)
-        buf_leg_bright = bytearray(91)
-        buf_leg_bright[1:] = rep_leg_bright
+        buf_leg_bright = bytearray(91); buf_leg_bright[1:] = rep_leg_bright
         cbuf_leg_bright = (ctypes.c_char * 91).from_buffer(buf_leg_bright)
 
-        # 3. Initial Blackout (0, 0, 0)
-        rep_black_kbd = _create_razer_report(0x0F, 0x02, 0x09, [0x01, 0x05, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x1F)
+        # 3. Initial Hardware Blackout using EFFECT_NONE (0x0F, 0x02, 0x06)
+        rep_black_kbd = _create_razer_report(0x0F, 0x02, 0x06, [0x01, 0x05, 0x00, 0x00, 0x00, 0x00], txn=0x1F)
         buf_black_kbd = bytearray(91); buf_black_kbd[1:] = rep_black_kbd
         cbuf_black_kbd = (ctypes.c_char * 91).from_buffer(buf_black_kbd)
 
-        rep_black_mouse = _create_razer_report(0x0F, 0x02, 0x09, [0x01, 0x04, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x3F)
+        rep_black_mouse = _create_razer_report(0x0F, 0x02, 0x06, [0x01, 0x04, 0x00, 0x00, 0x00, 0x00], txn=0x3F)
         buf_black_mouse = bytearray(91); buf_black_mouse[1:] = rep_black_mouse
         cbuf_black_mouse = (ctypes.c_char * 91).from_buffer(buf_black_mouse)
+
+        rep_black_sw = _create_razer_report(0x0F, 0x02, 0x06, [0x01, 0x01, 0x00, 0x00, 0x00, 0x00], txn=0x3F)
+        buf_black_sw = bytearray(91); buf_black_sw[1:] = rep_black_sw
+        cbuf_black_sw = (ctypes.c_char * 91).from_buffer(buf_black_sw)
 
         with self.lock:
             devs = list(self.devices)
@@ -290,12 +304,15 @@ class RazerChromaManager:
         for dev in devs:
             try:
                 self.hid.HidD_SetFeature(dev.handle, cbuf_mode, 91)
-                self.hid.HidD_SetFeature(dev.handle, cbuf_ext_bright, 91)
                 self.hid.HidD_SetFeature(dev.handle, cbuf_leg_bright, 91)
                 if dev.device_type == "keyboard":
+                    self.hid.HidD_SetFeature(dev.handle, cbuf_kbd_bright, 91)
                     self.hid.HidD_SetFeature(dev.handle, cbuf_black_kbd, 91)
                 elif dev.device_type == "mouse":
+                    self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_bright, 91)
+                    self.hid.HidD_SetFeature(dev.handle, cbuf_sw_bright, 91)
                     self.hid.HidD_SetFeature(dev.handle, cbuf_black_mouse, 91)
+                    self.hid.HidD_SetFeature(dev.handle, cbuf_black_sw, 91)
                     # Check if mouse supports scroll wheel LED
                     rep_sw = _create_razer_report(0x0F, 0x02, 0x09, [0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x3F)
                     buf_sw = bytearray(91); buf_sw[1:] = rep_sw
@@ -304,6 +321,7 @@ class RazerChromaManager:
                         if self.hid.HidD_GetFeature(dev.handle, (ctypes.c_char * 91).from_buffer(rbuf), 91):
                             dev.has_scroll_wheel = (rbuf[1] == 0x02)
                 else:
+                    self.hid.HidD_SetFeature(dev.handle, cbuf_kbd_bright, 91)
                     self.hid.HidD_SetFeature(dev.handle, cbuf_black_kbd, 91)
             except Exception:
                 pass
@@ -344,6 +362,41 @@ class RazerChromaManager:
         last_sent_left = (0, 0, 0)
         last_sent_right = (0, 0, 0)
 
+        # Pre-allocate static draw frame command for keyboard matrix (0x0F, 0x02, 0x0C, effect=0x08)
+        buf_draw = bytearray(91)
+        draw_args = bytearray(12)
+        draw_args[2] = 0x08  # Draw LED Matrix Frame
+        buf_draw[1:] = _create_razer_report(0x0F, 0x02, 0x0C, draw_args, txn=0x1F)
+        cbuf_draw = (ctypes.c_char * 91).from_buffer(buf_draw)
+
+        # Pre-allocate blackout buffers using true EFFECT_NONE (0x0F, 0x02, 0x06)
+        buf_kbd_off = bytearray(91)
+        buf_kbd_off[1:] = _create_razer_report(0x0F, 0x02, 0x06, [0x01, 0x05, 0x00, 0x00, 0x00, 0x00], txn=0x1F)
+        cbuf_kbd_off = (ctypes.c_char * 91).from_buffer(buf_kbd_off)
+
+        buf_mouse_off = bytearray(91)
+        buf_mouse_off[1:] = _create_razer_report(0x0F, 0x02, 0x06, [0x01, 0x04, 0x00, 0x00, 0x00, 0x00], txn=0x3F)
+        cbuf_mouse_off = (ctypes.c_char * 91).from_buffer(buf_mouse_off)
+
+        buf_sw_off = bytearray(91)
+        buf_sw_off[1:] = _create_razer_report(0x0F, 0x02, 0x06, [0x01, 0x01, 0x00, 0x00, 0x00, 0x00], txn=0x3F)
+        cbuf_sw_off = (ctypes.c_char * 91).from_buffer(buf_sw_off)
+
+        # Pre-allocate black matrix frame row buffers for instant zero-allocation blackout
+        buf_black_rows = []
+        cbuf_black_rows = []
+        black_row_rgb = bytearray(66)
+        for row in range(6):
+            args_black_row = bytearray(71)
+            args_black_row[2] = row
+            args_black_row[3] = 0
+            args_black_row[4] = 21
+            args_black_row[5:5 + 66] = black_row_rgb
+            rep_black_row = _create_razer_report(0x0F, 0x03, 0x47, args_black_row, txn=0x1F)
+            buf_br = bytearray(91); buf_br[1:] = rep_black_row
+            buf_black_rows.append(buf_br)
+            cbuf_black_rows.append((ctypes.c_char * 91).from_buffer(buf_br))
+
         while self.running:
             try:
                 item = self.color_queue.get(timeout=0.030)
@@ -370,42 +423,66 @@ class RazerChromaManager:
             if not devs or not self.enabled:
                 continue
 
-            # Pre-build packet buffers using VARSTORE (0x01):
-            # cmd 0x0F / 0x02: Extended matrix static color
-            # Keyboard backlight (0x05) uses txn 0x1F
-            args_kbd = bytearray([0x01, 0x05, 0x01, 0x00, 0x00, 0x01, b_left[0], b_left[1], b_left[2]])
-            rep_kbd = _create_razer_report(0x0F, 0x02, 0x09, args_kbd, txn=0x1F)
-            buf_kbd = bytearray(91)
-            buf_kbd[1:] = rep_kbd
-            cbuf_kbd = (ctypes.c_char * 91).from_buffer(buf_kbd)
-
-            # Mouse logo (0x04) uses txn 0x3F
-            args_mouse_logo = bytearray([0x01, 0x04, 0x01, 0x00, 0x00, 0x01, b_right[0], b_right[1], b_right[2]])
-            rep_mouse_logo = _create_razer_report(0x0F, 0x02, 0x09, args_mouse_logo, txn=0x3F)
-            buf_mouse_logo = bytearray(91)
-            buf_mouse_logo[1:] = rep_mouse_logo
-            cbuf_mouse_logo = (ctypes.c_char * 91).from_buffer(buf_mouse_logo)
-
-            cbuf_mouse_wheel = None
+            is_kbd_blackout = (b_left == (0, 0, 0))
+            is_mouse_blackout = (b_right == (0, 0, 0))
 
             # Send to hardware
             for dev in devs:
                 try:
                     if dev.device_type == "keyboard":
-                        self.hid.HidD_SetFeature(dev.handle, cbuf_kbd, 91)
+                        if is_kbd_blackout:
+                            # True hardware blackout: EFFECT_NONE + flush black custom matrix frame
+                            self.hid.HidD_SetFeature(dev.handle, cbuf_kbd_off, 91)
+                            for cbuf_row in cbuf_black_rows:
+                                self.hid.HidD_SetFeature(dev.handle, cbuf_row, 91)
+                            self.hid.HidD_SetFeature(dev.handle, cbuf_draw, 91)
+                        else:
+                            # Dual-layer hardware illumination:
+                            # Layer 1: Extended matrix static color report (0x0F, 0x02, 0x09)
+                            args_kbd = bytearray([0x01, 0x05, 0x01, 0x00, 0x00, 0x01, b_left[0], b_left[1], b_left[2]])
+                            rep_kbd = _create_razer_report(0x0F, 0x02, 0x09, args_kbd, txn=0x1F)
+                            buf_kbd = bytearray(91); buf_kbd[1:] = rep_kbd
+                            self.hid.HidD_SetFeature(dev.handle, (ctypes.c_char * 91).from_buffer(buf_kbd), 91)
+
+                            # Layer 2: Custom matrix frame (0x0F, 0x03, 0x47) rows 0..5 + Draw Frame (0x0F, 0x02, 0x0C)
+                            row_rgb = bytearray([b_left[0], b_left[1], b_left[2]] * 22)
+                            for row in range(6):
+                                args_row = bytearray(71)
+                                args_row[2] = row
+                                args_row[3] = 0
+                                args_row[4] = 21
+                                args_row[5:5 + 66] = row_rgb
+                                rep_row = _create_razer_report(0x0F, 0x03, 0x47, args_row, txn=0x1F)
+                                buf_row = bytearray(91); buf_row[1:] = rep_row
+                                self.hid.HidD_SetFeature(dev.handle, (ctypes.c_char * 91).from_buffer(buf_row), 91)
+                            self.hid.HidD_SetFeature(dev.handle, cbuf_draw, 91)
+
                     elif dev.device_type == "mouse":
-                        self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_logo, 91)
-                        if getattr(dev, "has_scroll_wheel", False):
-                            if cbuf_mouse_wheel is None:
+                        if is_mouse_blackout:
+                            self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_off, 91)
+                            if getattr(dev, "has_scroll_wheel", False):
+                                self.hid.HidD_SetFeature(dev.handle, cbuf_sw_off, 91)
+                        else:
+                            # Mouse logo (0x04) uses txn 0x3F
+                            args_mouse_logo = bytearray([0x01, 0x04, 0x01, 0x00, 0x00, 0x01, b_right[0], b_right[1], b_right[2]])
+                            rep_mouse_logo = _create_razer_report(0x0F, 0x02, 0x09, args_mouse_logo, txn=0x3F)
+                            buf_mouse_logo = bytearray(91); buf_mouse_logo[1:] = rep_mouse_logo
+                            self.hid.HidD_SetFeature(dev.handle, (ctypes.c_char * 91).from_buffer(buf_mouse_logo), 91)
+
+                            if getattr(dev, "has_scroll_wheel", False):
                                 args_sw = bytearray([0x01, 0x01, 0x01, 0x00, 0x00, 0x01, b_right[0], b_right[1], b_right[2]])
                                 rep_sw = _create_razer_report(0x0F, 0x02, 0x09, args_sw, txn=0x3F)
-                                buf_sw = bytearray(91)
-                                buf_sw[1:] = rep_sw
-                                cbuf_mouse_wheel = (ctypes.c_char * 91).from_buffer(buf_sw)
-                            self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_wheel, 91)
+                                buf_sw = bytearray(91); buf_sw[1:] = rep_sw
+                                self.hid.HidD_SetFeature(dev.handle, (ctypes.c_char * 91).from_buffer(buf_sw), 91)
+
                     else:
-                        cbuf = cbuf_mouse_logo if getattr(dev, "led_id", 0x05) == 0x04 else cbuf_kbd
-                        self.hid.HidD_SetFeature(dev.handle, cbuf, 91)
+                        if is_kbd_blackout:
+                            self.hid.HidD_SetFeature(dev.handle, cbuf_kbd_off, 91)
+                        else:
+                            args_gen = bytearray([0x01, getattr(dev, "led_id", 0x05), 0x01, 0x00, 0x00, 0x01, b_left[0], b_left[1], b_left[2]])
+                            rep_gen = _create_razer_report(0x0F, 0x02, 0x09, args_gen, txn=0x3F)
+                            buf_gen = bytearray(91); buf_gen[1:] = rep_gen
+                            self.hid.HidD_SetFeature(dev.handle, (ctypes.c_char * 91).from_buffer(buf_gen), 91)
                 except Exception:
                     pass
 
@@ -422,7 +499,6 @@ class RazerChromaManager:
     def stop(self):
         """Gracefully release hardware handles and stop worker thread."""
         self.running = False
-        # Restore hardware Normal Mode (0x00) and fade out
         try:
             self.set_colors((0, 0, 0), (0, 0, 0))
             time.sleep(0.04)
@@ -433,9 +509,15 @@ class RazerChromaManager:
             for d in self.devices:
                 try:
                     if self.hid:
+                        # Turn off LEDs cleanly with EFFECT_NONE
+                        txn_off = 0x1F if d.device_type == "keyboard" else 0x3F
+                        rep_off = _create_razer_report(0x0F, 0x02, 0x06, [0x01, getattr(d, 'led_id', 0x05), 0x00, 0x00, 0x00, 0x00], txn=txn_off)
+                        buf_off = bytearray(91); buf_off[1:] = rep_off
+                        self.hid.HidD_SetFeature(d.handle, (ctypes.c_char * 91).from_buffer(buf_off), 91)
+
+                        # Restore hardware Normal Mode (0x00) for media keys / volume roller
                         rep_mode = _create_razer_report(0x00, 0x04, 0x02, [0x00, 0x00], txn=0x3F)
-                        buf_mode = bytearray(91)
-                        buf_mode[1:] = rep_mode
+                        buf_mode = bytearray(91); buf_mode[1:] = rep_mode
                         self.hid.HidD_SetFeature(d.handle, (ctypes.c_char * 91).from_buffer(buf_mode), 91)
                     if self.kernel32:
                         self.kernel32.CloseHandle(d.handle)

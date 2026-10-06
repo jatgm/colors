@@ -19,9 +19,10 @@ HIGH_FREQ_RANGE = (2800, 7500)
 HIHAT_FREQ_RANGE = (7500, 16000)
 
 # Strobe Modes
-MODE_PSYCHO_OVERDRIVE = "🔥 Psycho Overdrive (Ultra)"
-MODE_MACHINE_GUN = "⚡ Machine-Gun Multi-Band"
-MODE_STROBE_BLITZ = "💥 Hyper Strobe Blitz"
+MODE_PSYCHO_OVERDRIVE = "[OVR] Psycho Overdrive (Ultra)"
+MODE_ALBUM_ART = "[ALBUM] Cover Art Sync"
+MODE_MACHINE_GUN = "[BURST] Machine-Gun Multi-Band"
+MODE_STROBE_BLITZ = "[BLZ] Hyper Strobe Blitz"
 MODE_HARD_STROBE = "Hard Strobe"
 MODE_DUAL_STROBE = "Kick + Snare Dual"
 MODE_SMOOTH_PULSE = "Smooth Rave Pulse"
@@ -31,6 +32,7 @@ MODE_MONOCHROME = "Monochrome Blitz"
 
 STROBE_MODES = [
     MODE_PSYCHO_OVERDRIVE,
+    MODE_ALBUM_ART,
     MODE_MACHINE_GUN,
     MODE_STROBE_BLITZ,
     MODE_HARD_STROBE,
@@ -42,12 +44,21 @@ STROBE_MODES = [
 ]
 
 # Color Palettes (RGB tuples)
+PALETTE_ALBUM_ART = "[ALBUM] Cover Art"
+
 PALETTES = {
     "Cyberpunk": [
         (255, 0, 128),   # Neon Pink / Magenta
         (0, 240, 255),   # Electric Cyan
         (157, 0, 255),   # Neon Purple
         (255, 230, 0),   # Electric Yellow
+        (0, 255, 170),   # Mint Neon
+    ],
+    PALETTE_ALBUM_ART: [
+        (0, 240, 255),   # Electric Cyan
+        (255, 0, 128),   # Neon Magenta
+        (157, 0, 255),   # Violet Flare
+        (255, 230, 0),   # Sunburst Gold
         (0, 255, 170),   # Mint Neon
     ],
     "Rave Neon": [

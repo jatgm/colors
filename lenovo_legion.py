@@ -1,8 +1,23 @@
 """
 Lenovo Legion Gaming Desktop RGB Synchronization.
-Supports Lenovo Legion PCs (e.g. Legion T5 28IMB05, T730, T530, etc.)
-equipped with ITE 8297 / IT8297BX USB RGB controllers (VID 0x17EF / 0x048D, PID 0xC955 / 0x8297)
+Supports Lenovo Legion PCs (e.g. Legion T5 28IMB05 / T550, T730, T530, etc.)
+equipped with ITE 8297 / IT8233 USB RGB controllers (VID 0x17EF / 0x048D, PID 0xC955 / 0x8297)
 via direct Win32 USB HID Feature Reports (zero external dependencies).
+
+Native Lenovo Vantage Protocol:
+- Zone 1: Front Legion "Y" Logo (Monochromatic Blue)
+- Zone 2: Front Bezel / Accents (Monochromatic Blue)
+- Zone 3: CPU Cooler Fan / ARGB Header (Full RGB)
+- Zone 4: Rear Exhaust Fan / Front Intake (Full RGB)
+- Zone 5: Front Upper ARGB Fan / Header (Full RGB)
+- Zone 6: Front Lower ARGB Fan / Header (Full RGB)
+
+On beat flashes:
+- Fans reflect dynamic RGB strobe colors at full brightness (scale 4).
+- Monochromatic blue zones (logo and accents) illuminate in OEM Lenovo Vantage Blue (21, 141, 255)
+  at full brightness so they flash synchronously with the beat impacts.
+On blackout:
+- All zones switch to effect 0, brightness 0, RGB (0, 0, 0) for true blackout cuts.
 """
 
 import sys
@@ -10,6 +25,7 @@ import time
 import queue
 import threading
 import ctypes
+
 try:
     from ctypes import wintypes, Structure, c_uint8, c_uint, c_ushort
 except ImportError:
@@ -27,11 +43,41 @@ RGB_USAGE = 0x00CC
 REPORT_ID = 0xCC
 REPORT_LEN = 64
 
-# Commands
+# Native Lenovo / ITE Commands
 CMD_INIT = 0x60
-CMD_APPLY = 0x28
+CMD_APPLY_PRIMARY = 0x28
+CMD_APPLY_SECONDARY = 0x2D
+
+# Effect Commands
 EFFECT_OFF = 0
 EFFECT_STATIC = 1
+EFFECT_BREATHING = 2
+
+# Native Lenovo Motherboard Zones
+ZONE_LOGO = 0x01           # Front Legion "Y" Logo (Monochromatic Blue)
+ZONE_FRONT_BEZEL = 0x02    # Front Bezel / Accents (Monochromatic Blue)
+ZONE_FRONT_ACCENT = 0x10   # Front Bezel Accent / Logo (Alternate address)
+ZONE_REAR_FAN = 0x11       # Rear Exhaust Fan (Secondary RGB / Monochromatic)
+ZONE_CPU_COOLER = 0x12     # CPU Cooler Fan / ARGB Header (Primary RGB)
+ZONE_FRONT_UPPER = 0x13    # Front Upper Intake Fan (Primary RGB / Monochromatic)
+ZONE_FRONT_LOWER = 0x14    # Front Lower Intake Fan (Secondary RGB / Monochromatic)
+
+ALL_NATIVE_ZONES = (
+    ZONE_LOGO,
+    ZONE_FRONT_BEZEL,
+    ZONE_FRONT_ACCENT,
+    ZONE_REAR_FAN,
+    ZONE_CPU_COOLER,
+    ZONE_FRONT_UPPER,
+    ZONE_FRONT_LOWER,
+)
+
+MONOCHROME_BLUE_ZONES = (ZONE_LOGO, ZONE_FRONT_BEZEL, ZONE_FRONT_ACCENT)
+FAN_ARGB_ZONES = (ZONE_CPU_COOLER, ZONE_REAR_FAN, ZONE_FRONT_UPPER, ZONE_FRONT_LOWER)
+
+# Lenovo Vantage OEM Blue (with blue pinned to 255 for max monochromatic LED luminance)
+LENOVO_LOGO_BLUE = (21, 141, 255)
+
 
 
 if wintypes:
@@ -79,7 +125,41 @@ if wintypes:
             ("NumberFeatureDataIndices", ctypes.c_ushort),
         ]
 
+    class PktLenovoZone(Structure):
+        """Native Lenovo Vantage Desktop 64-byte zone feature report."""
+        _pack_ = 1
+        _fields_ = [
+            ("report_id", c_uint8),    # Byte 0: 0xCC
+            ("zone_id", c_uint8),      # Byte 1: zone (0x12, 0x11, 0x10, 0x13, 0x14)
+            ("effect_cmd", c_uint8),   # Byte 2: mode (0=Off, 1=Static, 2=Sparkle, 3=Breathing)
+            ("speed", c_uint8),        # Byte 3: 1..4 (default 1)
+            ("brightness", c_uint8),   # Byte 4: 0..4 (0=Off, 4=Full 100%)
+            ("red", c_uint8),          # Byte 5: 0..255
+            ("green", c_uint8),        # Byte 6: 0..255
+            ("blue", c_uint8),         # Byte 7: 0..255
+            ("padding", c_uint8 * 56), # Bytes 8..63: 0
+        ]
+
+    class PktLenovoCommit(Structure):
+        """Native Lenovo Vantage Desktop 64-byte commit feature report."""
+        _pack_ = 1
+        _fields_ = [
+            ("report_id", c_uint8),       # Byte 0: 0xCC
+            ("cmd_apply", c_uint8),       # Byte 1: 0x28
+            ("sub_cmd", c_uint8),         # Byte 2: 0x06
+            ("pad_before", c_uint8 * 30), # Bytes 3..32
+            ("zone_id", c_uint8),         # Byte 33: zone
+            ("effect_cmd", c_uint8),      # Byte 34: mode
+            ("speed", c_uint8),           # Byte 35: speed
+            ("brightness", c_uint8),      # Byte 36: brightness
+            ("red", c_uint8),             # Byte 37: red
+            ("green", c_uint8),           # Byte 38: green
+            ("blue", c_uint8),            # Byte 39: blue
+            ("padding", c_uint8 * 24),    # Bytes 40..63
+        ]
+
     class PktEffect(Structure):
+        """ITE 8297 / Gigabyte compatibility 64-byte feature report."""
         _pack_ = 1
         _fields_ = [
             ("report_id", c_uint8),
@@ -123,11 +203,10 @@ class LenovoLegionManager:
         self.hid = None
         self.kernel32 = None
 
-        # Pre-allocated packets for 8 hardware channels (0x20..0x27)
-        self.packets = []
-        self.cbuf_packets = []
-        self.exec_buf = None
-        self.cbuf_exec = None
+        # Pre-allocated Native Lenovo buffers & structs (Zones 1, 2, 0x10, 0x11, 0x12, 0x13, 0x14)
+        self.native_pkts = {}
+        self.apply_primary_buf = None
+        self.apply_secondary_buf = None
 
         if sys.platform == "win32" and wintypes:
             self._init_win32_api()
@@ -255,55 +334,50 @@ class LenovoLegionManager:
         self.connected = True
 
         # Send controller initialization report
-        init_buf = bytearray(64)
+        init_buf = (c_uint8 * REPORT_LEN)()
         init_buf[0] = REPORT_ID
         init_buf[1] = CMD_INIT
-        self.hid.HidD_SetFeature(self.handle, (ctypes.c_char * 64).from_buffer(init_buf), 64)
+        self.hid.HidD_SetFeature(self.handle, ctypes.byref(init_buf), REPORT_LEN)
 
-        get_buf = bytearray(64)
+        get_buf = (c_uint8 * REPORT_LEN)()
         get_buf[0] = REPORT_ID
-        if self.hid.HidD_GetFeature(self.handle, (ctypes.c_char * 64).from_buffer(get_buf), 64):
+        if self.hid.HidD_GetFeature(self.handle, ctypes.byref(get_buf), REPORT_LEN):
             try:
-                null = get_buf.index(0, 12)
-                dev_str = get_buf[12:null].decode("ascii", errors="replace").strip()
+                raw_bytes = bytes(get_buf)
+                null = raw_bytes.find(0, 12)
+                null = null if null != -1 else len(raw_bytes)
+                dev_str = raw_bytes[12:null].decode("ascii", errors="replace").strip()
                 if dev_str:
                     self.device_name = f"Lenovo PC ({dev_str})"
             except Exception:
                 pass
 
-        # Pre-allocate 8 zone packets (headers 0x20..0x27)
-        self.packets = []
-        self.cbuf_packets = []
-        for i in range(8):
-            pkt = PktEffect()
-            pkt.report_id = REPORT_ID
-            pkt.header = 0x20 + i
-            pkt.zone0 = (1 << i)
-            pkt.zone1 = 0
-            pkt.reserved0 = 0
-            pkt.effect_type = EFFECT_OFF
-            pkt.max_brightness = 0
-            pkt.min_brightness = 0
-            pkt.color0 = 0
-            pkt.color1 = 0
-            pkt.period0 = 0
-            pkt.period1 = 0
-            pkt.period2 = 0
-            pkt.period3 = 0
-            pkt.param0 = 7
-            pkt.param1 = 1
-            pkt.param2 = 0
-            pkt.param3 = 0
-            cbuf = (ctypes.c_char * 64).from_buffer(pkt)
-            self.packets.append(pkt)
-            self.cbuf_packets.append(cbuf)
+        # 1. Pre-allocate Native Lenovo Zone Packets (Zones 1, 2, 0x10, 0x11, 0x12, 0x13, 0x14)
+        self.native_pkts = {}
+        for z in ALL_NATIVE_ZONES:
+            pz = PktLenovoZone()
+            pz.report_id = REPORT_ID
+            pz.zone_id = z
+            pz.effect_cmd = EFFECT_OFF
+            pz.speed = 1
+            pz.brightness = 0
+            pz.red = 0
+            pz.green = 0
+            pz.blue = 0
+            self.native_pkts[z] = pz
 
-        # Pre-allocate execute buffer
-        self.exec_buf = bytearray(64)
-        self.exec_buf[0] = REPORT_ID
-        self.exec_buf[1] = CMD_APPLY
-        self.exec_buf[2] = 0xFF
-        self.cbuf_exec = (ctypes.c_char * 64).from_buffer(self.exec_buf)
+        # 2. Native Lenovo Primary & Secondary Apply Packets (verified from Lenovo Vantage driver)
+        # Primary apply: [0xCC, 0x28, 0x0F, ...]
+        self.apply_primary_buf = (c_uint8 * REPORT_LEN)()
+        self.apply_primary_buf[0] = REPORT_ID
+        self.apply_primary_buf[1] = CMD_APPLY_PRIMARY
+        self.apply_primary_buf[2] = 0x0F
+
+        # Secondary apply: [0xCC, 0x2D, 0x07, ...]
+        self.apply_secondary_buf = (c_uint8 * REPORT_LEN)()
+        self.apply_secondary_buf[0] = REPORT_ID
+        self.apply_secondary_buf[1] = CMD_APPLY_SECONDARY
+        self.apply_secondary_buf[2] = 0x07
 
     def _boost_color(self, rgb):
         """Color booster for smooth rave transitions."""
@@ -316,12 +390,24 @@ class LenovoLegionManager:
         scale = target_max / max(1, max_c)
         return (min(255, int(r * scale)), min(255, int(g * scale)), min(255, int(b * scale)))
 
-    def set_colors(self, rgb, strobe_cut=True):
-        """Push target colors to Lenovo Legion PC lighting (non-blocking)."""
+    def set_colors(self, rgb, secondary_rgb=None, strobe_cut=True):
+        """Push target colors to Lenovo Legion PC lighting (non-blocking).
+
+        Args:
+            rgb: Primary (r, g, b) color tuple for fans and chassis.
+            secondary_rgb: Optional secondary (r, g, b) color tuple for dual-zone fan effects.
+                           If a boolean is passed here, it is treated as strobe_cut for backward compatibility.
+            strobe_cut: True for hard beat flash & blackout cuts; False for boosted smooth transitions.
+        """
         if not self.enabled or not self.connected:
             return
 
-        c = tuple(max(0, min(255, int(v))) for v in rgb[:3])
+        if isinstance(secondary_rgb, bool):
+            strobe_cut = secondary_rgb
+            secondary_rgb = None
+
+        c1 = tuple(max(0, min(255, int(v))) for v in rgb[:3])
+        c2 = tuple(max(0, min(255, int(v))) for v in secondary_rgb[:3]) if secondary_rgb is not None else c1
 
         # Drain backlog so queue only ever holds the newest frame
         try:
@@ -331,13 +417,38 @@ class LenovoLegionManager:
             pass
 
         try:
-            self.color_queue.put_nowait((c, strobe_cut))
+            self.color_queue.put_nowait((c1, c2, strobe_cut))
         except queue.Full:
             pass
 
+    def _send_blackout(self):
+        """Immediately transmit blackout / power-off feature reports to all controller zones."""
+        with self.lock:
+            h = self.handle
+            if not h or not self.hid:
+                return
+
+            try:
+                # 1. Native Lenovo motherboard zones blackout
+                for z, pz in self.native_pkts.items():
+                    pz.effect_cmd = EFFECT_OFF
+                    pz.brightness = 0
+                    pz.red = 0
+                    pz.green = 0
+                    pz.blue = 0
+                    self.hid.HidD_SetFeature(h, ctypes.byref(pz), REPORT_LEN)
+
+                # Commit changes on controller (Primary 0x28 + Secondary 0x2D)
+                if self.apply_primary_buf:
+                    self.hid.HidD_SetFeature(h, ctypes.byref(self.apply_primary_buf), REPORT_LEN)
+                if self.apply_secondary_buf:
+                    self.hid.HidD_SetFeature(h, ctypes.byref(self.apply_secondary_buf), REPORT_LEN)
+            except Exception:
+                pass
+
     def _worker_loop(self):
         """Dedicated background worker thread writing to the USB HID controller."""
-        last_sent = (0, 0, 0)
+        last_sent = None
 
         while self.running:
             try:
@@ -345,16 +456,19 @@ class LenovoLegionManager:
             except queue.Empty:
                 continue
 
-            color, strobe_cut = item
+            c1, c2, strobe_cut = item
 
             if strobe_cut:
-                target_rgb = color
+                target_rgb1 = c1
+                target_rgb2 = c2
             else:
-                target_rgb = self._boost_color(color)
+                target_rgb1 = self._boost_color(c1)
+                target_rgb2 = self._boost_color(c2)
 
-            if target_rgb == last_sent:
+            state_key = (target_rgb1, target_rgb2, strobe_cut)
+            if state_key == last_sent:
                 continue
-            last_sent = target_rgb
+            last_sent = state_key
 
             with self.lock:
                 h = self.handle
@@ -363,59 +477,109 @@ class LenovoLegionManager:
             if not h or not is_on:
                 continue
 
-            r, g, b = target_rgb
-            is_blackout = (r == 0 and g == 0 and b == 0)
-
-            # Packed RGB integer
-            col_int = (r << 16) | (g << 8) | b
-            eff_type = EFFECT_OFF if is_blackout else EFFECT_STATIC
-            bright = 0 if is_blackout else 100
+            r1, g1, b1 = target_rgb1
+            r2, g2, b2 = target_rgb2
+            is_blackout = (max(r1, g1, b1) == 0 and max(r2, g2, b2) == 0)
 
             try:
-                # Update all 8 motherboard / fan / cooler / strip headers
-                for i in range(8):
-                    pkt = self.packets[i]
-                    pkt.effect_type = eff_type
-                    pkt.max_brightness = bright
-                    pkt.color0 = 0 if is_blackout else col_int
-                    self.hid.HidD_SetFeature(h, self.cbuf_packets[i], 64)
+                if is_blackout:
+                    # 1. True blackout across all native zones: completely shut off LEDs
+                    for z, pz in self.native_pkts.items():
+                        pz.effect_cmd = EFFECT_OFF
+                        pz.brightness = 0
+                        pz.red = 0
+                        pz.green = 0
+                        pz.blue = 0
+                        self.hid.HidD_SetFeature(h, ctypes.byref(pz), REPORT_LEN)
 
-                # Commit changes instantly
-                self.hid.HidD_SetFeature(h, self.cbuf_exec, 64)
+                    if self.apply_primary_buf:
+                        self.hid.HidD_SetFeature(h, ctypes.byref(self.apply_primary_buf), REPORT_LEN)
+                    if self.apply_secondary_buf:
+                        self.hid.HidD_SetFeature(h, ctypes.byref(self.apply_secondary_buf), REPORT_LEN)
+                else:
+                    # 2. Dynamic illumination across native motherboard zones
+                    if strobe_cut:
+                        # Hard beat strobe flash: 100% full brightness (scale 4)
+                        # Monochromatic zones (Logo 1, Bezel 2, Accent 0x10) flash in punchy OEM Blue
+                        # Fan / ARGB zones reflect strobe colors with full blue power for monochromatic LEDs
+                        for z, pz in self.native_pkts.items():
+                            if z in MONOCHROME_BLUE_ZONES:
+                                zr, zg, zb = LENOVO_LOGO_BLUE
+                            elif z in (ZONE_CPU_COOLER, ZONE_FRONT_UPPER):
+                                zr, zg, zb = (r1, g1, max(b1, 255))
+                            else:
+                                zr, zg, zb = (r2, g2, max(b2, 255))
+
+                            pz.effect_cmd = EFFECT_STATIC
+                            pz.brightness = 4  # 100% full brilliance
+                            pz.speed = 1
+                            pz.red = zr
+                            pz.green = zg
+                            pz.blue = zb
+                            self.hid.HidD_SetFeature(h, ctypes.byref(pz), REPORT_LEN)
+                    else:
+                        # Smooth rave pulsation: scale brightness proportionally
+                        max_lum = max(r1, g1, b1, r2, g2, b2)
+                        scale = max_lum / 255.0
+                        bright = max(1, min(4, int(scale * 4) + (1 if scale > 0.05 else 0)))
+
+                        for z, pz in self.native_pkts.items():
+                            if z in MONOCHROME_BLUE_ZONES:
+                                zr = int(LENOVO_LOGO_BLUE[0] * scale)
+                                zg = int(LENOVO_LOGO_BLUE[1] * scale)
+                                zb = int(LENOVO_LOGO_BLUE[2] * scale)
+                            elif z in (ZONE_CPU_COOLER, ZONE_FRONT_UPPER):
+                                zr, zg, zb = r1, g1, b1
+                            else:
+                                zr, zg, zb = r2, g2, b2
+
+                            pz.effect_cmd = EFFECT_STATIC
+                            pz.brightness = bright
+                            pz.speed = 1
+                            pz.red = zr
+                            pz.green = zg
+                            pz.blue = zb
+                            self.hid.HidD_SetFeature(h, ctypes.byref(pz), REPORT_LEN)
+
+                    if self.apply_primary_buf:
+                        self.hid.HidD_SetFeature(h, ctypes.byref(self.apply_primary_buf), REPORT_LEN)
+                    if self.apply_secondary_buf:
+                        self.hid.HidD_SetFeature(h, ctypes.byref(self.apply_secondary_buf), REPORT_LEN)
+
             except Exception:
                 pass
 
     def toggle_enabled(self):
         """Toggle Lenovo Legion PC RGB lighting on/off."""
-        self.enabled = not self.enabled
-        if not self.enabled:
-            self.set_colors((0, 0, 0))
-        return self.enabled
+        with self.lock:
+            self.enabled = not self.enabled
+            is_enabled = self.enabled
+
+        if not is_enabled:
+            self._send_blackout()
+        return is_enabled
 
     def stop(self):
         """Shutdown worker thread, blackout LEDs, and release USB handle."""
         self.running = False
         try:
-            self.set_colors((0, 0, 0))
-            time.sleep(0.04)
+            while not self.color_queue.empty():
+                try:
+                    self.color_queue.get_nowait()
+                except queue.Empty:
+                    break
         except Exception:
             pass
 
-        with self.lock:
-            if self.handle and self.hid:
-                try:
-                    for i in range(8):
-                        if self.packets and self.cbuf_packets:
-                            pkt = self.packets[i]
-                            pkt.effect_type = EFFECT_OFF
-                            pkt.max_brightness = 0
-                            pkt.color0 = 0
-                            self.hid.HidD_SetFeature(self.handle, self.cbuf_packets[i], 64)
-                    if self.cbuf_exec:
-                        self.hid.HidD_SetFeature(self.handle, self.cbuf_exec, 64)
-                except Exception:
-                    pass
+        self._send_blackout()
 
+        if hasattr(self, "worker_thread") and self.worker_thread.is_alive():
+            try:
+                self.worker_thread.join(timeout=0.25)
+            except Exception:
+                pass
+
+        with self.lock:
             if self.handle and self.kernel32:
                 try:
                     self.kernel32.CloseHandle(self.handle)
@@ -423,3 +587,30 @@ class LenovoLegionManager:
                     pass
                 self.handle = None
                 self.connected = False
+
+
+if __name__ == "__main__":
+    print("Testing Lenovo Legion Desktop RGB Controller...")
+    mgr = LenovoLegionManager()
+    print(f"Connected: {mgr.connected} | Device: {mgr.device_name}")
+
+    if mgr.connected:
+        print("\nSimulating beat flash cycles (Colored fans + Blue Logo / Blackout cuts)...")
+        test_sequence = [
+            ((255, 0, 50), (0, 220, 255)),   # Red fans, Cyan fans, Blue logo
+            ((0, 255, 100), (255, 180, 0)),  # Green fans, Gold fans, Blue logo
+            ((255, 0, 255), (0, 150, 255)),  # Magenta fans, Ice Blue fans, Blue logo
+        ]
+        for idx, (c1, c2) in enumerate(test_sequence, 1):
+            print(f"Beat {idx}: FLASH -> Fans {c1} & {c2}, Logo {LENOVO_LOGO_BLUE}")
+            mgr.set_colors(c1, c2, strobe_cut=True)
+            time.sleep(0.12)
+            print(f"Beat {idx}: BLACKOUT -> True Blackout (0, 0, 0)")
+            mgr.set_colors((0, 0, 0), (0, 0, 0), strobe_cut=True)
+            time.sleep(0.18)
+
+        print("\nTesting blackout and teardown...")
+        mgr.stop()
+        print("Teardown complete. All LEDs dark.")
+    else:
+        print("No Lenovo Legion RGB hardware detected.")

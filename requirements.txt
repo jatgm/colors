@@ -3,3 +3,5 @@ pygame>=2.5.0
 soundcard>=0.4.3
 cffi>=1.15.0
 bleak>=0.22.0
+winrt-Windows.Media.Control>=3.2.1
+winrt-Windows.Storage.Streams>=3.2.1

@@ -133,20 +133,65 @@ class BeatDetector:
             else:
                 mono = mono[:self.chunk_size]
 
-        # 1. Measure raw input peak
+        # 1. Measure raw input peak and RMS energy
         raw_peak = float(np.max(np.abs(mono)))
+        raw_rms = float(np.sqrt(np.mean(mono**2)))
         self.raw_input_peak = raw_peak
+
+        # Silence / Noise Floor Threshold:
+        # Background microphone hiss, fan noise, or idle desktop audio loopback typically < 0.006 RMS or < 0.015 Peak.
+        is_silence = (raw_rms < 0.006) or (raw_peak < 0.015)
+        if is_silence:
+            # Below noise floor: freeze AGC from inflating noise and decay visual meters to zero
+            self.rolling_peak = max(0.010, self.rolling_peak * 0.995)
+            self.current_agc_gain = min(15.0, 0.80 / self.rolling_peak) * self.user_gain
+
+            self.bass_level = max(0.0, self.bass_level * 0.65)
+            self.mid_level = max(0.0, self.mid_level * 0.65)
+            self.high_level = max(0.0, self.high_level * 0.65)
+            self.hihat_level = max(0.0, self.hihat_level * 0.65)
+            self.total_level = max(0.0, self.total_level * 0.65)
+            self.spectrum_bars *= 0.70
+
+            self.prev_bass_energy = 0.0
+            self.prev_high_energy = 0.0
+            self.prev_hihat_energy = 0.0
+            self.prev_total_energy = 0.0
+            self.bass_flux_history.append(0.0)
+            self.high_flux_history.append(0.0)
+            self.hihat_flux_history.append(0.0)
+            self.total_energy_history.append(0.0)
+            self.bass_energy_history.append(0.0)
+
+            return {
+                "is_kick": False,
+                "is_snare": False,
+                "is_hihat": False,
+                "is_drop": False,
+                "bass_level": min(1.0, float(self.bass_level)),
+                "mid_level": min(1.0, float(self.mid_level)),
+                "high_level": min(1.0, float(self.high_level)),
+                "hihat_level": min(1.0, float(self.hihat_level)),
+                "total_level": min(1.0, float(self.total_level)),
+                "spectrum_bars": self.spectrum_bars,
+                "bpm": float(self.estimated_bpm),
+                "bpm_confidence": float(self.bpm_confidence),
+                "overdrive": self.overdrive_mode,
+                "raw_peak": float(self.raw_input_peak),
+                "agc_gain": float(self.current_agc_gain),
+                "preamp_gain": float(self.user_gain),
+            }
 
         # 2. Dynamic Automatic Gain Control (AGC)
         # Fast attack, slow release tracking
         if raw_peak > self.rolling_peak:
             self.rolling_peak = raw_peak * 0.85 + self.rolling_peak * 0.15
         else:
-            self.rolling_peak = max(0.003, self.rolling_peak * 0.992)
+            self.rolling_peak = max(0.008, self.rolling_peak * 0.992)
 
         # Calculate automatic scaling factor (capped at 60x max gain)
         # Target peak is ~0.80 full scale
-        auto_gain = min(60.0, 0.80 / max(0.003, self.rolling_peak))
+        auto_gain = min(60.0, 0.80 / max(0.008, self.rolling_peak))
         total_gain = auto_gain * self.user_gain
         self.current_agc_gain = total_gain
 

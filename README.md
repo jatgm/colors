@@ -114,19 +114,36 @@ Beat Strobe connects directly to connected Razer Keyboards and Mice to flash and
 
 ---
 
+---
+
+## Native Album Cover Art Sync (Hotkey A)
+
+Beat Strobe connects directly to the native Windows Runtime (`Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager`) to automatically detect media currently playing across Windows media players (Spotify, Apple Music, Tidal, Chrome, Edge, YouTube Music, etc.):
+
+- **Native Cover Art Capture**: Streams the album artwork image bytes directly from the active media session's thumbnail reference without web scraping or third-party API keys.
+- **Intelligent Palette Extraction**: Samples and analyzes the cover artwork in HSV color space, extracting the 5 most vibrant, contrasting dominant colors while filtering out dark mud and washed-out tones.
+- **Dynamic Real-Time Track Updates**: When tracks change, Beat Strobe extracts the new artwork palette on-the-fly and seamlessly transitions strobe colors.
+- **Hardware Peripheral Lockstep**: Screen strobes, Razer Chroma keyboards & mice (`razer_mgr`), HappyLighting BLE room LED strips (`happylighting_mgr`), and Lenovo Legion gaming desktop PC RGB (`lenovo_mgr`) all flash and pulse in perfect sync with the album cover art colors.
+- **HUD Now Playing Card**: Displays a 40x40 thumbnail of the actual album cover, track title, artist name, and 5 color swatch chips on the Heads-Up Display. Clicking the card or pressing **`A`** immediately engages Album Art mode.
+
+---
+
 ## Controls and Shortcuts
 
 | Key | Action | Description |
 | :--- | :--- | :--- |
 | **`ESC`** | **Exit / Close Modal** | Closes active modal or exits the application safely. |
+| **`A`** | **Toggle Album Art Mode** | Toggles strobe mode & palette sync to currently playing album cover art. |
 | **`X`** | **Toggle CRAZY MODE** | Instantly toggles Crazy Overdrive strobe on/off. |
 | **`C`** | **Toggle Razer Chroma** | Toggles hardware RGB lighting sync for Razer keyboards & mice. |
+| **`L`** | **Toggle Room Lights** | Toggles Bluetooth BLE room light strip synchronization (HappyLighting). |
+| **`K`** | **Toggle Legion PC RGB** | Toggles Lenovo Legion gaming desktop PC RGB lighting. |
 | **`N`** | **Bluetooth Sync Modal** | Opens the Multi-Computer Host & Client sync panel. |
 | **`F`** or **`F11`** | **Display Mode** | Cycles: Dual Monitor Fullscreen $\to$ Monitor 1 $\to$ Monitor 2 $\to$ Windowed. |
 | **`B`** or **`2`** | **Dual FX Scheme** | Cycles: Dual Synced $\to$ Ping-Pong Alternating $\to$ Complementary Contrast $\to$ Panoramic. |
 | **`H`** or **`TAB`** | **Toggle HUD** | Shows or hides the control overlay (HUD auto-fades after 3.5s of mouse inactivity). |
-| **`M`** | **Cycle Strobe Mode** | Cycles through 9 strobe modes. |
-| **`P`** | **Cycle Palette** | Switches between 9 color palettes. |
+| **`M`** | **Cycle Strobe Mode** | Cycles through strobe modes (including [ALBUM] Cover Art Sync). |
+| **`P`** | **Cycle Palette** | Switches between color palettes (including [ALBUM] Cover Art). |
 | **`V`** | **Cycle Visual Style** | Solid Fullscreen $\leftrightarrow$ Radial Shockwave $\leftrightarrow$ Horizon Pulse. |
 | **`D`** | **Switch Audio Source** | Cycles between System Audio Loopback, Monitors, and Microphones. |
 | **`S`** | **Safe Mode Toggle** | Toggles gentle pulsing glow vs intense hard strobe. |

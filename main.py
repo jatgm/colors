@@ -26,12 +26,13 @@ from sync_manager import SyncManager, ROLE_STANDALONE, ROLE_HOST, ROLE_CLIENT
 from razer_chroma import RazerChromaManager
 from happylighting import HappyLightingManager
 from lenovo_legion import LenovoLegionManager
+from media_sync import MediaArtManager
 
 
 class BeatStrobeApp:
     def __init__(self):
         pygame.init()
-        pygame.display.set_caption("⚡ Beat Strobe - Dual Monitor & Crazy Overdrive")
+        pygame.display.set_caption("BEAT STROBE // DUAL MONITOR & OVERDRIVE")
 
         # Display manager for multi-monitor setup
         self.display_mgr = DisplayManager()
@@ -47,6 +48,8 @@ class BeatStrobeApp:
         self.razer_mgr = RazerChromaManager()
         self.happylighting_mgr = HappyLightingManager()
         self.lenovo_mgr = LenovoLegionManager()
+        self.media_mgr = MediaArtManager()
+        self.last_media_update_count = -1
 
         # Engage Crazy Overdrive Mode by default for maximum strobe intensity!
         self.audio_mgr.set_overdrive(True)
@@ -158,6 +161,9 @@ class BeatStrobeApp:
                         elif event.key == pygame.K_k:
                             # Toggle Lenovo Legion Gaming Desktop RGB Lighting
                             self.lenovo_mgr.toggle_enabled()
+                        elif event.key == pygame.K_a:
+                            # Toggle Album Cover Art Strobe Mode & Palette
+                            self.visualizer.toggle_album_art_mode()
                         elif event.key == pygame.K_n:
                             self.hud.toggle_sync_modal()
                         elif event.key in (pygame.K_f, pygame.K_F11) or (event.key == pygame.K_RETURN and (event.mod & pygame.KMOD_ALT)):
@@ -214,6 +220,7 @@ class BeatStrobeApp:
                                 self.razer_mgr,
                                 self.happylighting_mgr,
                                 self.lenovo_mgr,
+                                self.media_mgr,
                             )
                             if not consumed and is_double and not self.hud.show_sync_modal:
                                 self.cycle_display_mode()
@@ -271,7 +278,14 @@ class BeatStrobeApp:
 
                 else:
                     audio_state = self.audio_mgr.get_latest_state()
+                    audio_state["is_paused"] = getattr(self.media_mgr, "is_paused", False)
+                    audio_state["is_media_playing"] = getattr(self.media_mgr, "is_playing", False)
                     self.visualizer.update(dt, audio_state)
+
+                # Dynamically sync native album cover art palette (Host / Standalone)
+                if not is_client and self.media_mgr.update_count != self.last_media_update_count:
+                    self.last_media_update_count = self.media_mgr.update_count
+                    self.visualizer.update_album_art_palette(self.media_mgr.get_palette())
 
                 # 3. Update HUD timers
                 self.hud.update(dt)
@@ -286,7 +300,7 @@ class BeatStrobeApp:
                 col_left, col_right, is_strobe = self.visualizer.get_peripheral_colors()
                 self.razer_mgr.set_colors(col_left, col_right, strobe_cut=is_strobe)
                 self.happylighting_mgr.set_colors(col_left, strobe_cut=is_strobe)
-                self.lenovo_mgr.set_colors(col_left, strobe_cut=is_strobe)
+                self.lenovo_mgr.set_colors(col_left, col_right, strobe_cut=is_strobe)
 
                 # 6. Broadcast to connected clients (Host only)
                 if is_host:
@@ -314,6 +328,7 @@ class BeatStrobeApp:
                     self.razer_mgr,
                     self.happylighting_mgr,
                     self.lenovo_mgr,
+                    self.media_mgr,
                 )
 
                 # 8. Display swap & frame cap
@@ -321,6 +336,7 @@ class BeatStrobeApp:
                 self.clock.tick(FPS_CAP)
 
         finally:
+            self.media_mgr.stop()
             self.lenovo_mgr.stop()
             self.happylighting_mgr.stop()
             self.razer_mgr.stop()

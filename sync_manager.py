@@ -414,7 +414,7 @@ class SyncManager:
         with self.lock:
             for h in self.discovered_hosts:
                 hosts.append({
-                    "name": f"⚡ {h['name']}",
+                    "name": f"[NET] {h['name']}",
                     "address": h["ip"],
                     "port": h["port"],
                     "bt_mac": h["bt_mac"],
@@ -423,7 +423,7 @@ class SyncManager:
         bt_devs = self.bt_scanner.get_devices()
         for b in bt_devs:
             hosts.append({
-                "name": f"🔵 {b['name']}",
+                "name": f"[BT] {b['name']}",
                 "address": b["mac"],
                 "port": self.bt_channel,
                 "bt_mac": b["mac"],

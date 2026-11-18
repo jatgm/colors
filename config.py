@@ -3,8 +3,8 @@ Configuration, color palettes, strobe modes, and constants.
 """
 
 # Window / Display Defaults
-DEFAULT_WINDOW_WIDTH = 1280
-DEFAULT_WINDOW_HEIGHT = 720
+DEFAULT_WINDOW_WIDTH = 1360
+DEFAULT_WINDOW_HEIGHT = 800
 FPS_CAP = 120  # High frame rate for ultra-snappy strobe sync
 
 # Audio settings
@@ -19,7 +19,10 @@ HIGH_FREQ_RANGE = (2800, 7500)
 HIHAT_FREQ_RANGE = (7500, 16000)
 
 # Strobe Modes
+MODE_STROBE_2_0 = "[2.0] Strobe 2.0 (Smart Sync)"
 MODE_PSYCHO_OVERDRIVE = "[OVR] Psycho Overdrive (Ultra)"
+MODE_RED_ONLY = "[RED] Red Only"
+MODE_BASS_ONLY = "[BASS] Bass Only"
 MODE_ALBUM_ART = "[ALBUM] Cover Art Sync"
 MODE_MACHINE_GUN = "[BURST] Machine-Gun Multi-Band"
 MODE_STROBE_BLITZ = "[BLZ] Hyper Strobe Blitz"
@@ -31,7 +34,10 @@ MODE_CHAOS_BLITZ = "Chaos Blitz"
 MODE_MONOCHROME = "Monochrome Blitz"
 
 STROBE_MODES = [
+    MODE_STROBE_2_0,
     MODE_PSYCHO_OVERDRIVE,
+    MODE_RED_ONLY,
+    MODE_BASS_ONLY,
     MODE_ALBUM_ART,
     MODE_MACHINE_GUN,
     MODE_STROBE_BLITZ,
@@ -116,10 +122,37 @@ PALETTES = {
         (255, 255, 255), # Pure White
         (190, 190, 190), # Silver
         (80, 80, 80),    # Dark Charcoal
+    ],
+    "Pure Red": [
+        (255, 0, 0),     # Pure Red
+        (220, 0, 0),     # Crimson Red
+        (255, 30, 20),   # Scarlet Flare
+        (180, 0, 0),     # Deep Dark Red
     ]
 }
 
 PALETTE_NAMES = list(PALETTES.keys())
+
+# Solid Color Lighting Presets (Static room and screen illumination)
+SOLID_COLORS = [
+    ("Red", (255, 0, 0)),
+    ("Orange", (255, 95, 0)),
+    ("Amber", (255, 175, 0)),
+    ("Yellow", (255, 235, 0)),
+    ("Lime", (0, 255, 60)),
+    ("Mint", (0, 255, 180)),
+    ("Cyan", (0, 220, 255)),
+    ("Sky Blue", (0, 150, 255)),
+    ("Deep Blue", (0, 60, 255)),
+    ("Violet", (130, 0, 255)),
+    ("Magenta", (255, 0, 140)),
+    ("Hot Pink", (255, 60, 180)),
+    ("Warm White", (255, 215, 160)),
+    ("Pure White", (255, 255, 255)),
+]
+
+SOLID_COLOR_NAMES = [name for name, _ in SOLID_COLORS]
+SOLID_COLOR_MAP = {name: col for name, col in SOLID_COLORS}
 
 # Default Sensitivity & Decay values
 DEFAULT_SENSITIVITY = 1.6

@@ -18,8 +18,12 @@ from config import (
     DEFAULT_PREAMP_GAIN,
     MIN_PREAMP_GAIN,
     MAX_PREAMP_GAIN,
+    MODE_STROBE_2_0,
+    MODE_RED_ONLY,
     MODE_ALBUM_ART,
     PALETTE_ALBUM_ART,
+    SOLID_COLORS,
+    SOLID_COLOR_NAMES,
 )
 from sync_manager import (
     ROLE_STANDALONE,
@@ -60,11 +64,18 @@ class HUD:
         self.entering_custom_host = False
         self.custom_host_input = ""
 
-        # Active dragging state for sliders
+        # Active dragging state for sliders and waveform
         self.dragging_slider = None
+        self.dragging_waveform = False
+        self.mouse_hover_pos = None
 
         # Discovered host button rectangles
         self.host_item_rects = []
+
+        # Solid color lighting controls & swatches
+        self.solid_swatch_rects = []
+        self.btn_solid_toggle = None
+        self.solid_name_rect = None
 
         self._build_layout()
 
@@ -144,51 +155,97 @@ class HUD:
         self.entering_custom_host = False
 
     def _build_layout(self):
-        """Build responsive sci-fi telemetry HUD layout with balanced proportions."""
+        """Build sleek, compact modern HUD layout with low vertical footprint."""
         mon = self.active_mon_rect
-        panel_w = min(880, mon.width - 40)
-        panel_h = 276
+        panel_w = min(1040, mon.width - 32)
+        panel_h = 282
         panel_x = mon.x + (mon.width - panel_w) // 2
-        panel_y = mon.y + mon.height - panel_h - 16
+        panel_y = mon.y + mon.height - panel_h - 14
 
         self.panel_rect = pygame.Rect(panel_x, panel_y, panel_w, panel_h)
 
         # Top Right: Now Playing Native Album Cover Artwork Card
         card_w = min(220, max(180, (panel_w - 60) // 4))
-        card_h = 44
-        card_x = panel_x + panel_w - card_w - 20
-        card_y = panel_y + 38
+        card_h = 40
+        card_x = panel_x + panel_w - card_w - 18
+        card_y = panel_y + 28
         self.card_album_art = pygame.Rect(card_x, card_y, card_w, card_h)
 
-        # Middle: Telemetry Sliders (Sensitivity, Pre-Amp Boost, Decay Speed)
-        slider_label_w = 110
-        slider_x = panel_x + 20 + slider_label_w
-        slider_val_w = 64
-        slider_w = panel_w - 40 - slider_label_w - slider_val_w
-        self.slider_sens_rect = pygame.Rect(slider_x, panel_y + 92, slider_w, 12)
-        self.slider_gain_rect = pygame.Rect(slider_x, panel_y + 112, slider_w, 12)
-        self.slider_decay_rect = pygame.Rect(slider_x, panel_y + 132, slider_w, 12)
+        # Waveform Song Progress Bar Deck (height 80px for rich dynamic response)
+        wf_x = panel_x + 18
+        wf_y = panel_y + 72
+        wf_w = panel_w - 36
+        wf_h = 80
+        self.waveform_rect = pygame.Rect(wf_x, wf_y, wf_w, wf_h)
 
-        # Bottom Command Matrix: Balanced 2-Row Arrangement
+        # Middle: 3 Sliders Side-by-Side in 1 sleek row
         pad_x = 18
         avail_w = panel_w - 2 * pad_x
-        btn_h = 30
+        gap_sliders = 14
+        col_w = (avail_w - 2 * gap_sliders) // 3
+        s_y = panel_y + 158
 
-        # Row 1 (Visual, Display & Album Controls - 6 buttons)
-        gap1 = 8
-        bw1 = (avail_w - 5 * gap1) // 6
-        by1 = panel_y + 158
+        # Slider 1: SENS
+        lbl_w1 = 34
+        val_w1 = 50
+        bar_w1 = max(40, col_w - lbl_w1 - val_w1 - 8)
+        self.slider_sens_rect = pygame.Rect(panel_x + pad_x + lbl_w1 + 4, s_y + 3, bar_w1, 10)
+
+        # Slider 2: GAIN
+        col2_x = panel_x + pad_x + col_w + gap_sliders
+        lbl_w2 = 34
+        val_w2 = 50
+        bar_w2 = max(40, col_w - lbl_w2 - val_w2 - 8)
+        self.slider_gain_rect = pygame.Rect(col2_x + lbl_w2 + 4, s_y + 3, bar_w2, 10)
+
+        # Slider 3: DECAY
+        col3_x = col2_x + col_w + gap_sliders
+        lbl_w3 = 40
+        val_w3 = 42
+        bar_w3 = max(40, col_w - lbl_w3 - val_w3 - 8)
+        self.slider_decay_rect = pygame.Rect(col3_x + lbl_w3 + 4, s_y + 3, bar_w3, 10)
+
+        # Solid Color Lighting Control Deck & Swatches Bar
+        solid_y = panel_y + 182
+        solid_h = 22
+        btn_solid_w = 100
+        self.btn_solid_toggle = pygame.Rect(panel_x + pad_x, solid_y, btn_solid_w, solid_h)
+
+        name_badge_w = 76
+        swatches_avail_w = avail_w - btn_solid_w - name_badge_w - 18
+        num_swatches = len(SOLID_COLORS)
+        swatch_gap = 3
+        swatch_w = max(14, min(34, (swatches_avail_w - (num_swatches - 1) * swatch_gap) // num_swatches))
+        swatch_h = 18
+        swatch_y = solid_y + 2
+        swatch_start_x = panel_x + pad_x + btn_solid_w + 10
+
+        self.solid_swatch_rects = []
+        for i, (c_name, c_rgb) in enumerate(SOLID_COLORS):
+            sx = swatch_start_x + i * (swatch_w + swatch_gap)
+            s_rect = pygame.Rect(sx, swatch_y, swatch_w, swatch_h)
+            self.solid_swatch_rects.append((s_rect, i, c_name, c_rgb))
+
+        badge_x = swatch_start_x + num_swatches * (swatch_w + swatch_gap) + 6
+        self.solid_name_rect = pygame.Rect(badge_x, solid_y, name_badge_w, solid_h)
+
+        # Bottom Command Matrix: Balanced 2-Row Arrangement
+        btn_h = 24
+        gap1 = 5
+        bw1 = (avail_w - 6 * gap1) // 7
+        by1 = panel_y + 210
         self.btn_mode = pygame.Rect(panel_x + pad_x, by1, bw1, btn_h)
-        self.btn_palette = pygame.Rect(panel_x + pad_x + (bw1 + gap1), by1, bw1, btn_h)
-        self.btn_style = pygame.Rect(panel_x + pad_x + (bw1 + gap1) * 2, by1, bw1, btn_h)
-        self.btn_album_art = pygame.Rect(panel_x + pad_x + (bw1 + gap1) * 3, by1, bw1, btn_h)
-        self.btn_dualfx = pygame.Rect(panel_x + pad_x + (bw1 + gap1) * 4, by1, bw1, btn_h)
-        self.btn_displays = pygame.Rect(panel_x + pad_x + (bw1 + gap1) * 5, by1, bw1, btn_h)
+        self.btn_mode_2_0 = pygame.Rect(panel_x + pad_x + (bw1 + gap1), by1, bw1, btn_h)
+        self.btn_palette = pygame.Rect(panel_x + pad_x + (bw1 + gap1) * 2, by1, bw1, btn_h)
+        self.btn_style = pygame.Rect(panel_x + pad_x + (bw1 + gap1) * 3, by1, bw1, btn_h)
+        self.btn_album_art = pygame.Rect(panel_x + pad_x + (bw1 + gap1) * 4, by1, bw1, btn_h)
+        self.btn_dualfx = pygame.Rect(panel_x + pad_x + (bw1 + gap1) * 5, by1, bw1, btn_h)
+        self.btn_displays = pygame.Rect(panel_x + pad_x + (bw1 + gap1) * 6, by1, bw1, btn_h)
 
         # Row 2 (Engine, Hardware & Sync Controls - 7 buttons)
-        gap2 = 6
+        gap2 = 5
         bw2 = (avail_w - 6 * gap2) // 7
-        by2 = by1 + 36
+        by2 = by1 + 28
         self.btn_device = pygame.Rect(panel_x + pad_x, by2, bw2, btn_h)
         self.btn_sync = pygame.Rect(panel_x + pad_x + (bw2 + gap2), by2, bw2, btn_h)
         self.btn_overdrive = pygame.Rect(panel_x + pad_x + (bw2 + gap2) * 2, by2, bw2, btn_h)
@@ -317,6 +374,20 @@ class HUD:
         if not self.visible or self.alpha < 30:
             return False
 
+        # Waveform Progress Bar Deck Interactive Seeking
+        if hasattr(self, "waveform_rect") and self.waveform_rect.collidepoint(pos):
+            time_deck_w = 148
+            inner_w = max(10, self.waveform_rect.width - time_deck_w - 20)
+            wf_start = self.waveform_rect.x + 8
+            # Only seek if click is within the waveform progress bar area
+            if wf_start <= pos[0] <= wf_start + inner_w:
+                rel_x = pos[0] - wf_start
+                prog = max(0.0, min(1.0, rel_x / inner_w))
+                self.dragging_waveform = True
+                if media_mgr and hasattr(media_mgr, "seek"):
+                    media_mgr.seek(prog)
+            return True
+
         # Sliders
         if self.slider_sens_rect.inflate(10, 10).collidepoint(pos):
             self.dragging_slider = "sens"
@@ -331,9 +402,27 @@ class HUD:
             self._update_slider_pos(pos[0], self.slider_decay_rect, MIN_DECAY_RATE, MAX_DECAY_RATE, visualizer.set_decay_rate)
             return True
 
+        # Solid Lighting Controls
+        if hasattr(self, "btn_solid_toggle") and self.btn_solid_toggle and self.btn_solid_toggle.collidepoint(pos):
+            visualizer.toggle_solid_color()
+            return True
+
+        if hasattr(self, "solid_swatch_rects"):
+            for s_rect, idx, s_name, s_rgb in self.solid_swatch_rects:
+                if s_rect.collidepoint(pos):
+                    visualizer.set_solid_color(idx, activate=True)
+                    return True
+
+        if hasattr(self, "solid_name_rect") and self.solid_name_rect and self.solid_name_rect.collidepoint(pos):
+            visualizer.cycle_solid_color()
+            return True
+
         # Action Buttons
         if self.btn_mode.collidepoint(pos):
             visualizer.cycle_mode()
+            return True
+        elif hasattr(self, "btn_mode_2_0") and self.btn_mode_2_0.collidepoint(pos):
+            visualizer.toggle_mode_2_0()
             return True
         elif self.btn_palette.collidepoint(pos):
             visualizer.cycle_palette()
@@ -389,8 +478,10 @@ class HUD:
 
     def handle_mouse_up(self):
         self.dragging_slider = None
+        self.dragging_waveform = False
 
-    def handle_mouse_motion(self, pos, audio_mgr, visualizer, display_mgr):
+    def handle_mouse_motion(self, pos, audio_mgr, visualizer, display_mgr, media_mgr=None):
+        self.mouse_hover_pos = pos
         if display_mgr is not None:
             mon = display_mgr.get_monitor_for_point(pos[0], pos[1])
             if mon is not None and mon.rect != self.active_mon_rect:
@@ -403,6 +494,13 @@ class HUD:
             self._update_slider_pos(pos[0], self.slider_gain_rect, MIN_PREAMP_GAIN, MAX_PREAMP_GAIN, audio_mgr.set_preamp_gain)
         elif self.dragging_slider == "decay":
             self._update_slider_pos(pos[0], self.slider_decay_rect, MIN_DECAY_RATE, MAX_DECAY_RATE, visualizer.set_decay_rate)
+        elif self.dragging_waveform and hasattr(self, "waveform_rect") and media_mgr:
+            time_deck_w = 148
+            inner_w = max(10, self.waveform_rect.width - time_deck_w - 20)
+            wf_start = self.waveform_rect.x + 8
+            rel_x = pos[0] - wf_start
+            prog = max(0.0, min(1.0, rel_x / inner_w))
+            media_mgr.seek(prog)
 
     def _update_slider_pos(self, mx, rect, min_val, max_val, setter):
         norm = max(0.0, min(1.0, (mx - rect.x) / rect.width))
@@ -440,85 +538,109 @@ class HUD:
         panel_bg = (10, 14, 24, min(238, alpha_int))
         pygame.draw.rect(hud_surf, panel_bg, panel, border_radius=6)
 
-        # Dynamic Sci-Fi Border & Corner Brackets Color
-        if visualizer.overdrive_mode:
+        # Dynamic Accent Color & Active Mode Pill
+        if getattr(visualizer, "solid_color_active", False):
+            accent_col = (255, 205, 50)
+            c_name = visualizer.get_solid_color_name() if hasattr(visualizer, "get_solid_color_name") else "SOLID"
+            pill_text = f"SOLID: {c_name.upper()}"
+            pill_col = (255, 215, 70)
+            pill_bg = (44, 34, 14)
+        elif visualizer.is_album_art_active():
+            accent_col = (0, 240, 255)
+            pill_text = "ALBUM ART SYNC"
+            pill_col = (0, 240, 255)
+            pill_bg = (12, 38, 52)
+        elif visualizer.is_mode_2_0_active():
+            accent_col = (255, 60, 180)
+            pill_text = "STROBE 2.0"
+            pill_col = (255, 60, 180)
+            pill_bg = (42, 14, 36)
+        elif visualizer.mode == MODE_RED_ONLY:
+            accent_col = (255, 30, 45)
+            pill_text = "RED ONLY"
+            pill_col = (255, 50, 65)
+            pill_bg = (45, 12, 18)
+        elif visualizer.overdrive_mode:
             accent_col = (255, 60, 45)
-            title_text = "// SYS_TELEMETRY: OVERDRIVE_ENGAGED"
-            title_col = (255, 80, 60)
+            pill_text = "OVERDRIVE"
+            pill_col = (255, 80, 60)
+            pill_bg = (45, 16, 20)
         elif visualizer.safe_mode:
             accent_col = (0, 240, 150)
-            title_text = "// SYS_TELEMETRY: SAFE_GLOW_PROTOCOL"
-            title_col = (80, 240, 160)
+            pill_text = "SAFE GLOW"
+            pill_col = (80, 240, 160)
+            pill_bg = (12, 42, 26)
         else:
             accent_col = (0, 230, 255)
-            title_text = "// SYS_TELEMETRY: DUAL_CORE_ACTIVE"
-            title_col = (210, 240, 255)
+            pill_text = "ACTIVE"
+            pill_col = (100, 230, 255)
+            pill_bg = (14, 28, 44)
 
         # Draw Frame & Corner Brackets (clamped within rect bounds)
         frame_col = (*accent_col, min(140, alpha_int))
         pygame.draw.rect(hud_surf, frame_col, panel, width=1, border_radius=6)
-        self._draw_tech_corner_brackets(hud_surf, panel, (*accent_col, min(230, alpha_int)), bracket_len=12, width=2)
+        self._draw_tech_corner_brackets(hud_surf, panel, (*accent_col, min(220, alpha_int)), bracket_len=10, width=2)
 
         # Top Header Divider Bar
-        header_h = 28
+        header_h = 24
         header_surf = pygame.Surface((panel.width, header_h), pygame.SRCALPHA)
-        header_surf.fill((16, 22, 36, min(200, alpha_int)))
+        header_surf.fill((14, 18, 28, min(210, alpha_int)))
         hud_surf.blit(header_surf, (panel.x, panel.y))
-        pygame.draw.line(hud_surf, (*accent_col, min(100, alpha_int)), (panel.x + 10, panel.y + header_h), (panel.right - 10, panel.y + header_h))
+        pygame.draw.line(hud_surf, (*accent_col, min(80, alpha_int)), (panel.x + 8, panel.y + header_h), (panel.right - 8, panel.y + header_h))
 
-        # Title Telemetry Tag
-        t_surf = self.font_title.render(title_text, True, title_col)
-        hud_surf.blit(t_surf, (panel.x + 14, panel.y + 6))
+        # Title: BEAT STROBE
+        t_surf = self.font_title.render("BEAT STROBE", True, (240, 245, 255))
+        hud_surf.blit(t_surf, (panel.x + 14, panel.y + 4))
 
-        # Audio source tag & Hardware Diagnostic badging (ZERO emojis)
-        raw_p = audio_state.get("raw_peak", 0.0)
-        agc_g = audio_state.get("agc_gain", 1.0)
+        # Active Mode Pill
+        pill_w = self.font_tiny.size(pill_text)[0] + 12
+        pill_rect = pygame.Rect(panel.x + 14 + t_surf.get_width() + 10, panel.y + 4, pill_w, 16)
+        pygame.draw.rect(hud_surf, (*pill_bg, alpha_int), pill_rect, border_radius=3)
+        pygame.draw.rect(hud_surf, (*pill_col, min(180, alpha_int)), pill_rect, width=1, border_radius=3)
+        p_text_surf = self.font_tiny.render(pill_text, True, pill_col)
+        hud_surf.blit(p_text_surf, (pill_rect.x + 6, pill_rect.y + 1))
 
-        hw_tags = []
-        if razer_mgr and razer_mgr.device_count > 0:
-            hw_tags.append(f"[RZ:{razer_mgr.device_count}]" if razer_mgr.enabled else "[RZ:OFF]")
-        if happylighting_mgr:
-            if happylighting_mgr.connected:
-                hw_tags.append("[RM:ON]" if happylighting_mgr.enabled else "[RM:OFF]")
-            elif happylighting_mgr.enabled:
-                hw_tags.append("[RM:SYNC]")
-        if lenovo_mgr and lenovo_mgr.connected:
-            hw_tags.append("[LG:ON]" if lenovo_mgr.enabled else "[LG:OFF]")
-
-        hw_str = " " + " ".join(hw_tags) if hw_tags else ""
-        diag_str = f"PK:{int(raw_p * 100)}% AGC:{agc_g:.1f}x{hw_str}"
-
-        if sync_mgr.role == ROLE_CLIENT:
-            lat = sync_mgr.client_latency_ms
-            lat_str = f" {lat:.0f}ms" if lat > 0 else ""
-            dev_tag = f"[SLAVE] {sync_mgr.client_connected_host or 'SEARCH'}{lat_str}"
-            dev_col = (100, 240, 255)
-        elif sync_mgr.role == ROLE_HOST:
-            dev_tag = f"[HOST] {diag_str} // NODES:{sync_mgr.client_count}"
-            dev_col = (255, 120, 220)
+        # Right Header Pills (Source, Hardware, Network)
+        right_pills = []
+        is_spotify = (audio_mgr and getattr(audio_mgr, "devices", None) and
+                      len(audio_mgr.devices) > audio_mgr.current_device_index and
+                      audio_mgr.devices[audio_mgr.current_device_index] == "spotify")
+        if is_spotify:
+            right_pills.append(("SPOTIFY", (0, 240, 160), (10, 36, 24)))
         else:
-            dev_name = audio_mgr.current_device_name if audio_mgr else "DEFAULT_IN"
-            if len(dev_name) > 18:
-                dev_name = dev_name[:16] + ".."
-            dev_tag = f"[SRC] {dev_name} // {diag_str}"
-            dev_col = (100, 255, 170) if (audio_mgr and not audio_mgr.demo_mode) else (255, 180, 50)
+            dev_name = audio_mgr.current_device_name if audio_mgr else "DEFAULT"
+            if len(dev_name) > 14:
+                dev_name = dev_name[:12] + ".."
+            right_pills.append((dev_name.upper(), (100, 220, 255), (14, 30, 44)))
 
-        # Dynamic truncation to strictly prevent header text collision
-        max_right_w = panel.width - t_surf.get_width() - 36
-        if max_right_w > 60:
-            if self.font_small.size(dev_tag)[0] > max_right_w:
-                while len(dev_tag) > 6 and self.font_small.size(dev_tag + "..")[0] > max_right_w:
-                    dev_tag = dev_tag[:-1]
-                dev_tag = dev_tag + ".."
-            dev_surf = self.font_small.render(dev_tag, True, dev_col)
-            hud_surf.blit(dev_surf, (panel.right - dev_surf.get_width() - 14, panel.y + 8))
+        if razer_mgr and razer_mgr.device_count > 0 and razer_mgr.enabled:
+            right_pills.append(("RAZER", (0, 255, 120), (12, 38, 22)))
+        if happylighting_mgr and happylighting_mgr.enabled:
+            right_pills.append(("ROOM", (0, 240, 255), (12, 36, 48)))
+        if lenovo_mgr and lenovo_mgr.enabled:
+            right_pills.append(("LEGION", (0, 190, 255), (14, 30, 48)))
 
-        # 2. Audio Telemetry Deck (Top Row: 24-Band Spectrum, VU Meters, Reticle BPM, Album Card)
-        spec_x = panel.x + 20
-        spec_y = panel.y + 36
+        if sync_mgr and sync_mgr.role == ROLE_HOST:
+            right_pills.append((f"HOST:{sync_mgr.client_count}", (240, 100, 255), (38, 14, 42)))
+        elif sync_mgr and sync_mgr.role == ROLE_CLIENT:
+            right_pills.append(("CLIENT", (100, 240, 255), (14, 32, 48)))
+
+        rx = panel.right - 14
+        for p_name, p_fg, p_bg in reversed(right_pills):
+            p_tw = self.font_tiny.size(p_name)[0] + 10
+            rx -= p_tw
+            r_pill = pygame.Rect(rx, panel.y + 4, p_tw, 16)
+            pygame.draw.rect(hud_surf, (*p_bg, alpha_int), r_pill, border_radius=3)
+            pygame.draw.rect(hud_surf, (*p_fg, min(140, alpha_int)), r_pill, width=1, border_radius=3)
+            hud_surf.blit(self.font_tiny.render(p_name, True, p_fg), (r_pill.x + 5, r_pill.y + 1))
+            rx -= 6
+
+        # 2. Audio & Media Deck (Top Row: Spectrum, VU, BPM, and Now Playing Card)
+        spec_x = panel.x + 18
+        spec_y = panel.y + 28
         avail_for_audio = max(240, self.card_album_art.x - spec_x - 30)
         spec_w = min(220, int(avail_for_audio * 0.46))
-        spec_h = 44
+        spec_h = 38
 
         # Background chamber for spectrum
         spec_bg = pygame.Rect(spec_x - 4, spec_y - 2, spec_w + 8, spec_h + 4)
@@ -538,61 +660,62 @@ class HUD:
                 bar_b = int(255)
                 bar_rect = pygame.Rect(int(bx), spec_y + spec_h - bh, max(2, int(bw)), max(2, bh))
                 pygame.draw.rect(hud_surf, (bar_r, bar_g, bar_b, alpha_int), bar_rect, border_radius=1)
-                # Glowing peak cap
                 if bh > 4:
                     cap_rect = pygame.Rect(int(bx), spec_y + spec_h - bh, max(2, int(bw)), 2)
                     pygame.draw.rect(hud_surf, (255, 255, 255, alpha_int), cap_rect)
 
-        # Frequency VU Level Meters (Segmented sci-fi telemetry bars)
+        # Frequency VU Level Meters
         levels_x = spec_x + spec_w + 14
         levels_y = spec_y
         meter_w = min(96, int(avail_for_audio * 0.21))
-        meter_h = 10
+        meter_h = 8
 
         b_val = audio_state.get("bass_level", 0.0)
         m_val = audio_state.get("mid_level", 0.0)
         h_val = audio_state.get("high_level", 0.0)
 
-        # [BASS]
-        hud_surf.blit(self.font_tiny.render("[BASS]", True, (255, 90, 130)), (levels_x, levels_y - 1))
-        self._render_segmented_vu(hud_surf, levels_x + 36, levels_y + 1, meter_w, meter_h, b_val, (255, 40, 100), alpha_int)
+        hud_surf.blit(self.font_tiny.render("BAS", True, (255, 90, 130)), (levels_x, levels_y - 1))
+        self._render_segmented_vu(hud_surf, levels_x + 28, levels_y + 1, meter_w, meter_h, b_val, (255, 40, 100), alpha_int)
 
-        # [MID]
-        hud_surf.blit(self.font_tiny.render("[MID]", True, (60, 240, 140)), (levels_x, levels_y + 15))
-        self._render_segmented_vu(hud_surf, levels_x + 36, levels_y + 17, meter_w, meter_h, m_val, (50, 240, 130), alpha_int)
+        hud_surf.blit(self.font_tiny.render("MID", True, (60, 240, 140)), (levels_x, levels_y + 13))
+        self._render_segmented_vu(hud_surf, levels_x + 28, levels_y + 15, meter_w, meter_h, m_val, (50, 240, 130), alpha_int)
 
-        # [HIGH]
-        hud_surf.blit(self.font_tiny.render("[HIGH]", True, (70, 200, 255)), (levels_x, levels_y + 31))
-        self._render_segmented_vu(hud_surf, levels_x + 36, levels_y + 33, meter_w, meter_h, h_val, (60, 210, 255), alpha_int)
+        hud_surf.blit(self.font_tiny.render("HIG", True, (70, 200, 255)), (levels_x, levels_y + 27))
+        self._render_segmented_vu(hud_surf, levels_x + 28, levels_y + 29, meter_w, meter_h, h_val, (60, 210, 255), alpha_int)
 
         # Beat Pulse Reticle & BPM
-        beat_x = levels_x + 36 + meter_w + 22
-        beat_y = levels_y + 20
+        beat_x = levels_x + 28 + meter_w + 18
+        beat_y = levels_y + 18
         is_beating = visualizer.kick_intensity > 0.4
 
-        # Sci-Fi Circular Crosshair Reticle
         reticle_col = (255, 40, 120) if is_beating else (45, 60, 80)
-        pygame.draw.circle(hud_surf, reticle_col, (beat_x, beat_y), 13, width=1)
-        # Tick marks on reticle
-        pygame.draw.line(hud_surf, reticle_col, (beat_x - 16, beat_y), (beat_x - 11, beat_y))
-        pygame.draw.line(hud_surf, reticle_col, (beat_x + 11, beat_y), (beat_x + 16, beat_y))
-        pygame.draw.line(hud_surf, reticle_col, (beat_x, beat_y - 16), (beat_x, beat_y - 11))
-        pygame.draw.line(hud_surf, reticle_col, (beat_x, beat_y + 11), (beat_x, beat_y + 16))
-
+        pygame.draw.circle(hud_surf, reticle_col, (beat_x, beat_y), 11, width=1)
         if is_beating:
-            pygame.draw.circle(hud_surf, (255, 50, 140, alpha_int), (beat_x, beat_y), 8)
-            pygame.draw.circle(hud_surf, (255, 255, 255, alpha_int), (beat_x, beat_y), 4)
+            pygame.draw.circle(hud_surf, (255, 50, 140, alpha_int), (beat_x, beat_y), 7)
+            pygame.draw.circle(hud_surf, (255, 255, 255, alpha_int), (beat_x, beat_y), 3)
         else:
-            pygame.draw.circle(hud_surf, (35, 45, 60, alpha_int), (beat_x, beat_y), 3)
-
-        hud_surf.blit(self.font_tiny.render("BEAT", True, (140, 160, 185)), (beat_x - 11, beat_y + 18))
+            pygame.draw.circle(hud_surf, (35, 45, 60, alpha_int), (beat_x, beat_y), 2)
 
         bpm = audio_state.get("bpm", 0.0)
         bpm_str = f"{int(round(bpm))} BPM" if bpm > 30 else "-- BPM"
         bpm_surf = self.font_title.render(bpm_str, True, (0, 240, 255))
-        hud_surf.blit(bpm_surf, (beat_x + 22, beat_y - 10))
+        hud_surf.blit(bpm_surf, (beat_x + 18, beat_y - 12))
 
-        # Now Playing Native Album Cover Artwork Card (Sci-Fi Media Terminal)
+        pitch_name = audio_state.get("pitch_name", "C")
+        sec_name = audio_state.get("section_name", "VERSE")
+        pitch_badge = f"KEY:{pitch_name}"
+        p_surf = self.font_tiny.render(pitch_badge, True, (255, 120, 220))
+        hud_surf.blit(p_surf, (beat_x + 18, beat_y + 3))
+
+        if sec_name == "CHORUS":
+            sec_surf = self.font_tiny.render("[CHORUS]", True, (255, 60, 180))
+        elif sec_name == "BUILDUP":
+            sec_surf = self.font_tiny.render("[BUILDUP]", True, (255, 200, 40))
+        else:
+            sec_surf = self.font_tiny.render("[VERSE]", True, (0, 220, 255))
+        hud_surf.blit(sec_surf, (beat_x + 18 + p_surf.get_width() + 6, beat_y + 3))
+
+        # Now Playing Native Album Cover Artwork Card
         if media_mgr and hasattr(self, "card_album_art"):
             media_info = media_mgr.get_info()
             hud_thumb = media_mgr.get_hud_thumbnail()
@@ -610,14 +733,13 @@ class HUD:
             pygame.draw.rect(hud_surf, (*card_border, alpha_int), card_rect, width=1, border_radius=4)
             self._draw_tech_corner_brackets(hud_surf, card_rect, (*card_border, alpha_int), bracket_len=6, width=1)
 
-            # Thumbnail or Tech Art Icon
             if hud_thumb:
                 hud_surf.blit(hud_thumb, (card_rect.x + 2, card_rect.y + 2))
             else:
-                icon_rect = pygame.Rect(card_rect.x + 2, card_rect.y + 2, 40, 40)
+                icon_rect = pygame.Rect(card_rect.x + 2, card_rect.y + 2, 36, 36)
                 pygame.draw.rect(hud_surf, (22, 28, 42, alpha_int), icon_rect, border_radius=3)
                 note_surf = self.font_main.render("ART", True, (0, 220, 255))
-                hud_surf.blit(note_surf, (card_rect.x + 8, card_rect.y + 12))
+                hud_surf.blit(note_surf, (card_rect.x + 6, card_rect.y + 10))
 
             raw_title = media_info.get("title", "") or "No Media Playing"
             raw_artist = media_info.get("artist", "") or ("WinRT Active" if media_info.get("has_art") else "Audio Standby")
@@ -629,15 +751,14 @@ class HUD:
             t_col = (255, 255, 255) if is_art_active else (205, 215, 230)
             t_surf = self.font_small.render(disp_title, True, t_col)
             a_surf = self.font_tiny.render(disp_artist, True, (130, 145, 170))
-            hud_surf.blit(t_surf, (card_rect.x + 46, card_rect.y + 3))
-            hud_surf.blit(a_surf, (card_rect.x + 46, card_rect.y + 17))
+            hud_surf.blit(t_surf, (card_rect.x + 44, card_rect.y + 2))
+            hud_surf.blit(a_surf, (card_rect.x + 44, card_rect.y + 15))
 
-            # Extracted Palette Color Swatch Chips
-            chip_y = card_rect.y + 31
+            chip_y = card_rect.y + 28
             chip_w = 11
             chip_h = 7
             for ci, col in enumerate(album_pal[:5]):
-                cx = card_rect.x + 46 + ci * (chip_w + 3)
+                cx = card_rect.x + 44 + ci * (chip_w + 3)
                 pygame.draw.rect(hud_surf, (*col, alpha_int), (cx, chip_y, chip_w, chip_h), border_radius=1)
                 pygame.draw.rect(hud_surf, (0, 0, 0, alpha_int), (cx, chip_y, chip_w, chip_h), width=1)
 
@@ -651,149 +772,399 @@ class HUD:
                 off_badge = self.font_tiny.render("[STANDBY]", True, (90, 110, 135))
                 hud_surf.blit(off_badge, (card_rect.right - off_badge.get_width() - 5, chip_y - 2))
 
-        # 3. Precision Telemetry Sliders (Sensitivity, Pre-Amp Boost, Decay Speed)
+        # 3. Waveform Song Progress Bar Deck
+        if hasattr(self, "waveform_rect"):
+            wf_rect = self.waveform_rect
+            if alpha_int > 0:
+                pygame.draw.rect(screen, (12, 16, 26), wf_rect, border_radius=4)
+            pygame.draw.rect(hud_surf, (12, 16, 26, 255), wf_rect, border_radius=4)
+            pygame.draw.rect(hud_surf, (30, 48, 68, alpha_int), wf_rect, width=1, border_radius=4)
+            self._draw_tech_corner_brackets(hud_surf, wf_rect, (45, 72, 100, alpha_int), bracket_len=6, width=1)
+
+            tl_info = media_mgr.get_timeline() if media_mgr else {}
+            pos_sec = tl_info.get("position", 0.0)
+            dur_sec = tl_info.get("duration", 0.0)
+            progress = tl_info.get("progress", 0.0)
+            is_playing = tl_info.get("is_playing", False)
+            is_paused = tl_info.get("is_paused", False)
+            wf_arr = tl_info.get("waveform", [])
+            wf_r = tl_info.get("waveform_r", [])
+            num_wf = len(wf_arr)
+
+            def _fmt_time(s):
+                m = int(s) // 60
+                sec = int(s) % 60
+                return f"{m:02d}:{sec:02d}"
+
+            time_deck_w = 148
+            inner_w = max(40, wf_rect.width - time_deck_w - 20)
+            wf_start_x = wf_rect.x + 8
+            cy = wf_rect.centery
+            max_half_h = max(4, (wf_rect.height - 12) // 2)
+
+            grid_y_offsets = [
+                int(max_half_h * 0.75),
+                int(max_half_h * 0.40),
+                -int(max_half_h * 0.40),
+                -int(max_half_h * 0.75),
+            ]
+            for dy in grid_y_offsets:
+                gy = cy + dy
+                pygame.draw.line(hud_surf, (22, 32, 48, min(90, alpha_int)), (wf_start_x, gy), (wf_start_x + inner_w, gy), 1)
+
+            pygame.draw.line(hud_surf, (32, 48, 70, alpha_int), (wf_start_x, cy), (wf_start_x + inner_w, cy), 1)
+
+            for frac, lbl in ((0.25, "25%"), (0.50, "50%"), (0.75, "75%")):
+                tx = int(wf_start_x + frac * inner_w)
+                pygame.draw.line(hud_surf, (36, 56, 80, alpha_int), (tx, wf_rect.y + 2), (tx, wf_rect.y + 7), 1)
+                pygame.draw.line(hud_surf, (36, 56, 80, alpha_int), (tx, wf_rect.bottom - 8), (tx, wf_rect.bottom - 3), 1)
+                lbl_surf = self.font_tiny.render(lbl, True, (65, 85, 110))
+                hud_surf.blit(lbl_surf, (tx - lbl_surf.get_width() // 2, wf_rect.y + 4))
+
+            sep_time_x = wf_rect.right - time_deck_w - 8
+            pygame.draw.line(hud_surf, (28, 44, 64, alpha_int), (sep_time_x, wf_rect.y + 6), (sep_time_x, wf_rect.bottom - 6), 1)
+
+            is_mode_2_0 = visualizer.is_mode_2_0_active() if hasattr(visualizer, "is_mode_2_0_active") else False
+            is_album_art = (visualizer.mode == MODE_ALBUM_ART or visualizer.palette_name == PALETTE_ALBUM_ART)
+            album_pal = media_mgr.get_palette() if media_mgr else []
+
+            if is_album_art and album_pal:
+                played_col_top = album_pal[0]
+                played_col_bot = album_pal[1] if len(album_pal) > 1 else album_pal[0]
+            elif is_mode_2_0:
+                sec_name = audio_state.get("section_name", "VERSE")
+                if sec_name == "CHORUS":
+                    played_col_top = (255, 45, 145)
+                    played_col_bot = (255, 175, 30)
+                elif sec_name == "BUILDUP":
+                    played_col_top = (255, 190, 40)
+                    played_col_bot = (245, 85, 35)
+                else:
+                    played_col_top = (0, 230, 255)
+                    played_col_bot = (140, 45, 255)
+            else:
+                played_col_top = (0, 240, 255)
+                played_col_bot = (0, 160, 235)
+
+            unplayed_col_top = (42, 60, 84)
+            unplayed_col_bot = (30, 44, 64)
+
+            play_x = wf_start_x + progress * inner_w
+
+            if num_wf > 0:
+                bar_step = inner_w / num_wf
+                for i in range(num_wf):
+                    x0 = int(wf_start_x + i * bar_step)
+                    x1 = int(wf_start_x + (i + 1) * bar_step)
+                    bar_w = max(1, x1 - x0 - 1) if (x1 - x0 > 1) else 1
+                    bx = x0
+
+                    amp_top = float(wf_arr[i])
+                    amp_bot = float(wf_r[i]) if (i < len(wf_r)) else (amp_top * 0.94)
+
+                    top_h = max(2, int(amp_top * max_half_h))
+                    bot_h = max(2, int(amp_bot * max_half_h * 0.92))
+
+                    is_played = (progress > 0.0 and (bx + bar_w * 0.5) <= play_x)
+                    c_top = played_col_top if is_played else unplayed_col_top
+                    c_bot = played_col_bot if is_played else unplayed_col_bot
+
+                    pygame.draw.rect(hud_surf, (*c_top, alpha_int), (bx, cy - top_h, bar_w, top_h), border_radius=1)
+                    pygame.draw.rect(hud_surf, (*c_bot, alpha_int), (bx, cy + 1, bar_w, bot_h), border_radius=1)
+
+                ph_x = int(play_x)
+                if wf_start_x <= ph_x <= wf_start_x + inner_w:
+                    pygame.draw.line(hud_surf, (*played_col_top, min(140, alpha_int)), (ph_x - 1, wf_rect.y + 2), (ph_x - 1, wf_rect.bottom - 3), 1)
+                    pygame.draw.line(hud_surf, (*played_col_top, min(140, alpha_int)), (ph_x + 1, wf_rect.y + 2), (ph_x + 1, wf_rect.bottom - 3), 1)
+                    pygame.draw.line(hud_surf, (255, 255, 255, alpha_int), (ph_x, wf_rect.y + 2), (ph_x, wf_rect.bottom - 3), 1)
+                    pygame.draw.circle(hud_surf, (*played_col_top, alpha_int), (ph_x, cy), 5)
+                    pygame.draw.circle(hud_surf, (255, 255, 255, alpha_int), (ph_x, cy), 3)
+
+                if hasattr(self, "mouse_hover_pos") and self.mouse_hover_pos:
+                    hx, hy = self.mouse_hover_pos
+                    if (wf_start_x <= hx <= wf_start_x + inner_w) and (wf_rect.y <= hy <= wf_rect.bottom):
+                        pygame.draw.line(hud_surf, (0, 240, 255, min(130, alpha_int)), (hx, wf_rect.y + 8), (hx, wf_rect.bottom - 9), 1)
+                        h_prog = (hx - wf_start_x) / inner_w
+                        h_time = h_prog * dur_sec if dur_sec > 0 else 0.0
+                        h_tip = f"[{_fmt_time(h_time)}]" if dur_sec > 0 else f"[{int(h_prog * 100)}%]"
+                        h_surf = self.font_tiny.render(h_tip, True, (0, 240, 255))
+                        tip_x = max(wf_start_x + 4, min(wf_start_x + inner_w - h_surf.get_width() - 8, hx - h_surf.get_width() // 2))
+                        tip_y = wf_rect.y + 4 if hy > cy else wf_rect.bottom - h_surf.get_height() - 6
+                        tip_bg = pygame.Rect(tip_x - 3, tip_y - 1, h_surf.get_width() + 6, h_surf.get_height() + 2)
+                        pygame.draw.rect(hud_surf, (8, 14, 24, min(240, alpha_int)), tip_bg, border_radius=2)
+                        pygame.draw.rect(hud_surf, (0, 200, 255, min(160, alpha_int)), tip_bg, width=1, border_radius=2)
+                        hud_surf.blit(h_surf, (tip_x, tip_y))
+            else:
+                idle_txt = self.font_tiny.render("TIMELINE STANDBY", True, (75, 95, 120))
+                hud_surf.blit(idle_txt, (wf_start_x + 10, cy - idle_txt.get_height() // 2))
+
+            # Right-side Time Deck
+            if dur_sec > 0:
+                badge_str = "[PAUSED]" if is_paused else ("[ACTIVE]" if is_playing else "[STOPPED]")
+                badge_col = (255, 180, 50) if is_paused else ((0, 240, 255) if is_playing else (110, 130, 155))
+            else:
+                badge_str = "[STANDBY]"
+                badge_col = (85, 105, 130)
+
+            badge_surf = self.font_tiny.render(badge_str, True, badge_col)
+            right_x = wf_rect.right - 10
+            badge_y = wf_rect.y + 7
+            hud_surf.blit(badge_surf, (right_x - badge_surf.get_width(), badge_y))
+            pip_x = right_x - badge_surf.get_width() - 8
+            pip_y = badge_y + badge_surf.get_height() // 2
+            pygame.draw.circle(hud_surf, (*badge_col, alpha_int), (pip_x, pip_y), 3)
+
+            time_str = f"{_fmt_time(pos_sec)} / {_fmt_time(dur_sec)}" if dur_sec > 0 else "--:-- / --:--"
+            time_surf = self.font_small.render(time_str, True, (240, 245, 255) if is_playing else (140, 160, 185))
+            hud_surf.blit(time_surf, (right_x - time_surf.get_width(), wf_rect.y + 22))
+
+            rem_sec = max(0.0, dur_sec - pos_sec)
+            pct_val = int(round(progress * 100))
+            sub_str = f"-{_fmt_time(rem_sec)} [{pct_val}%]" if dur_sec > 0 else "--:-- [0%]"
+            sub_surf = self.font_tiny.render(sub_str, True, (120, 145, 175))
+            hud_surf.blit(sub_surf, (right_x - sub_surf.get_width(), wf_rect.y + 37))
+
+            meter_w = time_deck_w - 24
+            meter_x = right_x - meter_w
+            meter_y = wf_rect.y + 53
+            pygame.draw.rect(hud_surf, (18, 26, 38, alpha_int), (meter_x, meter_y, meter_w, 4), border_radius=1)
+            pygame.draw.rect(hud_surf, (35, 52, 74, alpha_int), (meter_x, meter_y, meter_w, 4), width=1, border_radius=1)
+            if progress > 0:
+                fill_w = max(2, int(progress * meter_w))
+                pygame.draw.rect(hud_surf, (*played_col_top, alpha_int), (meter_x, meter_y, fill_w, 4), border_radius=1)
+                pygame.draw.rect(hud_surf, (255, 255, 255, alpha_int), (meter_x + fill_w - 1, meter_y, 1, 4))
+
+            sec_tag = audio_state.get("section_name", "VERSE")
+            fid_lbl = self.font_tiny.render(f"[{sec_tag}]", True, (90, 115, 145))
+            hud_surf.blit(fid_lbl, (right_x - fid_lbl.get_width(), wf_rect.y + 65))
+
+        # 4. Precision Sliders Deck (Side-by-Side 3 Columns)
         sens = audio_mgr.get_sensitivity() if audio_mgr else 1.0
         pre_g = audio_mgr.get_preamp_gain() if audio_mgr else 1.0
         decay = visualizer.decay_rate
 
-        # Slider 1: Sensitivity
-        hud_surf.blit(self.font_small.render("// SENSITIVITY", True, (180, 210, 230)), (panel.x + 20, self.slider_sens_rect.y - 1))
+        # Slider 1: SENS
+        hud_surf.blit(self.font_tiny.render("SENS", True, (170, 200, 220)), (self.slider_sens_rect.x - 34, self.slider_sens_rect.y - 1))
         self._render_slider(hud_surf, self.slider_sens_rect, sens, MIN_SENSITIVITY, MAX_SENSITIVITY, (0, 220, 255), alpha_int)
-        v_sens = self.font_small.render(f"[ {sens:.1f}x ]", True, (0, 240, 255))
-        hud_surf.blit(v_sens, (self.slider_sens_rect.right + 10, self.slider_sens_rect.y - 1))
+        v_sens = self.font_tiny.render(f"{sens:.1f}x", True, (0, 240, 255))
+        hud_surf.blit(v_sens, (self.slider_sens_rect.right + 6, self.slider_sens_rect.y - 1))
 
-        # Slider 2: Pre-Amp Boost
-        hud_surf.blit(self.font_small.render("// PREAMP_BOOST", True, (255, 205, 120)), (panel.x + 20, self.slider_gain_rect.y - 1))
+        # Slider 2: GAIN
+        hud_surf.blit(self.font_tiny.render("GAIN", True, (240, 195, 120)), (self.slider_gain_rect.x - 34, self.slider_gain_rect.y - 1))
         self._render_slider(hud_surf, self.slider_gain_rect, pre_g, MIN_PREAMP_GAIN, MAX_PREAMP_GAIN, (255, 180, 50), alpha_int)
-        v_gain = self.font_small.render(f"[ {pre_g:.1f}x ]", True, (255, 190, 60))
-        hud_surf.blit(v_gain, (self.slider_gain_rect.right + 10, self.slider_gain_rect.y - 1))
+        v_gain = self.font_tiny.render(f"{pre_g:.1f}x", True, (255, 190, 60))
+        hud_surf.blit(v_gain, (self.slider_gain_rect.right + 6, self.slider_gain_rect.y - 1))
 
-        # Slider 3: Decay Speed
-        hud_surf.blit(self.font_small.render("// DECAY_RATE", True, (255, 140, 90)), (panel.x + 20, self.slider_decay_rect.y - 1))
+        # Slider 3: DECAY
+        hud_surf.blit(self.font_tiny.render("DECAY", True, (240, 140, 90)), (self.slider_decay_rect.x - 40, self.slider_decay_rect.y - 1))
         self._render_slider(hud_surf, self.slider_decay_rect, decay, MIN_DECAY_RATE, MAX_DECAY_RATE, (255, 95, 30), alpha_int)
-        v_decay = self.font_small.render(f"[ {decay:.0f} ]", True, (255, 110, 40))
-        hud_surf.blit(v_decay, (self.slider_decay_rect.right + 10, self.slider_decay_rect.y - 1))
+        v_decay = self.font_tiny.render(f"{decay:.0f}", True, (255, 110, 40))
+        hud_surf.blit(v_decay, (self.slider_decay_rect.right + 6, self.slider_decay_rect.y - 1))
+
+        # 4.5 Solid Lighting Control Deck & Swatches Bar
+        solid_active = visualizer.is_solid_color_active() if hasattr(visualizer, "is_solid_color_active") else False
+        solid_btn_label = "[LIGHT] SOLID" if solid_active else "[LIGHT] MUSIC"
+        solid_btn_bg = (48, 38, 16) if solid_active else (18, 24, 38)
+        solid_btn_border = (255, 200, 40) if solid_active else (70, 95, 125)
+        solid_pip_col = (255, 210, 50) if solid_active else (0, 220, 255)
+
+        if hasattr(self, "btn_solid_toggle") and self.btn_solid_toggle:
+            self._render_button(
+                hud_surf,
+                self.btn_solid_toggle,
+                solid_btn_label,
+                solid_btn_bg,
+                solid_btn_border,
+                alpha_int,
+                has_pip=True,
+                pip_active=solid_active,
+                pip_col=solid_pip_col,
+            )
+
+        # Color Swatches
+        active_idx = getattr(visualizer, "solid_color_index", 0)
+        active_col = getattr(visualizer, "solid_color", (255, 0, 0))
+        hover_pos = self.mouse_hover_pos
+
+        if hasattr(self, "solid_swatch_rects"):
+            for s_rect, idx, s_name, s_rgb in self.solid_swatch_rects:
+                is_hover = bool(hover_pos and s_rect.collidepoint(hover_pos))
+                is_selected = (idx == active_idx) or (s_rgb == active_col)
+
+                pygame.draw.rect(hud_surf, (*s_rgb, alpha_int), s_rect, border_radius=2)
+
+                if is_selected and solid_active:
+                    pygame.draw.rect(hud_surf, (255, 255, 255, alpha_int), s_rect.inflate(4, 4), width=2, border_radius=3)
+                    pygame.draw.circle(hud_surf, (255, 255, 255, alpha_int), s_rect.center, 2)
+                elif is_selected:
+                    pygame.draw.rect(hud_surf, (200, 220, 240, alpha_int), s_rect.inflate(2, 2), width=1, border_radius=2)
+                elif is_hover:
+                    pygame.draw.rect(hud_surf, (255, 255, 255, alpha_int), s_rect, width=1, border_radius=2)
+                else:
+                    pygame.draw.rect(hud_surf, (15, 20, 30, alpha_int), s_rect, width=1, border_radius=2)
+
+        # Active Color Name Tag
+        if hasattr(self, "solid_name_rect") and self.solid_name_rect:
+            tag_rect = self.solid_name_rect
+            tag_name = visualizer.get_solid_color_name() if hasattr(visualizer, "get_solid_color_name") else "Solid"
+            tag_bg = (24, 20, 14, alpha_int) if solid_active else (14, 18, 28, alpha_int)
+            tag_border = (*active_col, alpha_int) if solid_active else (45, 60, 80, alpha_int)
+            pygame.draw.rect(hud_surf, tag_bg, tag_rect, border_radius=3)
+            pygame.draw.rect(hud_surf, tag_border, tag_rect, width=1, border_radius=3)
+            tag_text = self.font_tiny.render(f"[{tag_name}]", True, (255, 255, 255) if solid_active else (140, 160, 185))
+            hud_surf.blit(tag_text, (tag_rect.x + (tag_rect.width - tag_text.get_width()) // 2, tag_rect.y + 4))
 
         # Section Accent Line
-        sep_y = panel.y + 150
+        sep_y = panel.y + 206
         pygame.draw.line(hud_surf, (*accent_col, min(45, alpha_int)), (panel.x + 18, sep_y), (panel.right - 18, sep_y))
 
-        # 4. Command Matrix: Balanced 2-Row Arrangement
-        # --- Row 1: Visual, Display & Album Controls (6 buttons) ---
+        # 5. Command Matrix: 2-Row Arrangement
+        # --- Row 1: Visual, Display, 2.0 & Album Controls (7 buttons) ---
         m_txt = visualizer.mode
         if m_txt.startswith("[") and "]" in m_txt:
             m_txt = m_txt.split("]", 1)[1].strip()
-        self._render_button(hud_surf, self.btn_mode, f"[MODE] {m_txt}", (18, 24, 38), (0, 200, 255), alpha_int)
+        if "Strobe 2.0" in m_txt:
+            m_disp = "Mode: 2.0"
+        elif "Psycho" in m_txt:
+            m_disp = "Mode: Psycho"
+        elif "Red Only" in m_txt:
+            m_disp = "Mode: Red"
+        elif "Bass Only" in m_txt:
+            m_disp = "Mode: Bass"
+        elif "Cover Art" in m_txt:
+            m_disp = "Mode: Album"
+        elif "Machine-Gun" in m_txt:
+            m_disp = "Mode: Burst"
+        elif "Strobe Blitz" in m_txt:
+            m_disp = "Mode: Blitz"
+        else:
+            m_disp = f"Mode: {m_txt[:8]}"
+
+        is_red = (visualizer.mode == MODE_RED_ONLY)
+        btn_mode_bg = (42, 14, 18) if is_red else (18, 24, 38)
+        btn_mode_border = (255, 30, 45) if is_red else (0, 200, 255)
+        self._render_button(hud_surf, self.btn_mode, m_disp, btn_mode_bg, btn_mode_border, alpha_int,
+                            has_pip=is_red, pip_active=is_red, pip_col=(255, 30, 45))
+
+        mode_2_0_active = visualizer.is_mode_2_0_active()
+        mode_2_0_bg = (48, 14, 38) if mode_2_0_active else (18, 24, 38)
+        mode_2_0_border = (255, 40, 180) if mode_2_0_active else (85, 55, 105)
+        self._render_button(hud_surf, self.btn_mode_2_0, "Strobe 2.0",
+                            mode_2_0_bg, mode_2_0_border, alpha_int, has_pip=True, pip_active=mode_2_0_active, pip_col=(255, 40, 180))
 
         p_txt = visualizer.palette_name
         if p_txt.startswith("[") and "]" in p_txt:
             p_txt = p_txt.split("]", 1)[1].strip()
-        self._render_button(hud_surf, self.btn_palette, f"[PAL] {p_txt}", (26, 20, 36), (240, 40, 180), alpha_int)
+        self._render_button(hud_surf, self.btn_palette, f"Pal: {p_txt[:8]}", (26, 20, 36), (240, 40, 180), alpha_int)
 
-        self._render_button(hud_surf, self.btn_style, f"[STYLE] {visualizer.current_style}", (22, 22, 40), (160, 110, 255), alpha_int)
+        s_clean = visualizer.current_style.replace("Solid ", "").replace("Shockwave", "Wave")
+        self._render_button(hud_surf, self.btn_style, f"Style: {s_clean[:7]}", (22, 22, 40), (160, 110, 255), alpha_int)
 
         art_active = (visualizer.mode == MODE_ALBUM_ART or visualizer.palette_name == PALETTE_ALBUM_ART)
         art_bg = (10, 45, 60) if art_active else (18, 24, 38)
         art_border = (0, 240, 255) if art_active else (60, 80, 105)
-        self._render_button(hud_surf, self.btn_album_art, "[ALBUM] SYNC",
+        self._render_button(hud_surf, self.btn_album_art, "Album Sync",
                             art_bg, art_border, alpha_int, has_pip=True, pip_active=art_active, pip_col=(0, 240, 255))
 
-        dual_txt = visualizer.dual_scheme if is_dual else "SINGLE"
-        self._render_button(hud_surf, self.btn_dualfx, f"[DUAL] {dual_txt}", (30, 24, 45), (200, 110, 255), alpha_int)
+        dual_txt = visualizer.dual_scheme.replace("Dual ", "").replace("Alternating", "Alt").replace("Complementary ", "") if is_dual else "Single"
+        self._render_button(hud_surf, self.btn_dualfx, f"Dual: {dual_txt[:7]}", (30, 24, 45), (200, 110, 255), alpha_int)
 
         disp_txt = getattr(display_mgr, "current_mode", "Windowed") if display_mgr else "Win"
-        self._render_button(hud_surf, self.btn_displays, f"[DISP] {disp_txt}", (22, 30, 48), (100, 190, 255), alpha_int)
+        disp_txt = disp_txt.replace("Dual Monitor ", "").replace("Monitor ", "Mon ")
+        self._render_button(hud_surf, self.btn_displays, f"Disp: {disp_txt[:7]}", (22, 30, 48), (100, 190, 255), alpha_int)
 
         # --- Row 2: Engine, Hardware & Sync Controls (7 buttons) ---
-        self._render_button(hud_surf, self.btn_device, "[DEV] AUDIO IN", (18, 28, 40), (80, 220, 190), alpha_int)
+        is_spotify_active = (audio_mgr and getattr(audio_mgr, "devices", None) and
+                             len(audio_mgr.devices) > audio_mgr.current_device_index and
+                             audio_mgr.devices[audio_mgr.current_device_index] == "spotify")
+        dev_btn_txt = "Spotify" if is_spotify_active else "Audio In"
+        dev_btn_bg = (12, 38, 28) if is_spotify_active else (18, 28, 40)
+        dev_btn_border = (0, 240, 160) if is_spotify_active else (80, 220, 190)
+        self._render_button(hud_surf, self.btn_device, dev_btn_txt, dev_btn_bg, dev_btn_border, alpha_int,
+                            has_pip=is_spotify_active, pip_active=is_spotify_active, pip_col=(0, 240, 160))
 
-        if sync_mgr.role == ROLE_HOST:
-            sync_label = f"[SYNC] HOST ({sync_mgr.client_count})"
+        if sync_mgr and sync_mgr.role == ROLE_HOST:
+            sync_label = f"Sync: Host"
             sync_bg = (40, 20, 50)
             sync_border = (230, 90, 255)
-        elif sync_mgr.role == ROLE_CLIENT:
-            c_tag = "LINK" if sync_mgr.client_sock else "SCAN"
-            sync_label = f"[SYNC] {c_tag}"
+        elif sync_mgr and sync_mgr.role == ROLE_CLIENT:
+            c_tag = "Link" if sync_mgr.client_sock else "Scan"
+            sync_label = f"Sync: {c_tag}"
             sync_bg = (15, 38, 52)
             sync_border = (0, 220, 255)
         else:
-            sync_label = "[SYNC] BT/LAN"
+            sync_label = "Sync: BT/LAN"
             sync_bg = (18, 24, 38)
             sync_border = (90, 140, 190)
         self._render_button(hud_surf, self.btn_sync, sync_label, sync_bg, sync_border, alpha_int)
 
-        # Overdrive [OVR]
         ovr_active = visualizer.overdrive_mode
         ovr_bg = (70, 18, 22) if ovr_active else (24, 18, 24)
         ovr_border = (255, 60, 45) if ovr_active else (110, 50, 50)
-        self._render_button(hud_surf, self.btn_overdrive, "[OVR] CRAZY",
+        self._render_button(hud_surf, self.btn_overdrive, "Overdrive",
                             ovr_bg, ovr_border, alpha_int, has_pip=True, pip_active=ovr_active, pip_col=(255, 60, 45))
 
-        # Safe Mode [SAFE]
         safe_active = visualizer.safe_mode
         safe_bg = (15, 48, 30) if safe_active else (18, 24, 34)
         safe_border = (0, 240, 150) if safe_active else (60, 90, 80)
-        self._render_button(hud_surf, self.btn_safe, "[SAFE] GLOW",
+        self._render_button(hud_surf, self.btn_safe, "Safe Glow",
                             safe_bg, safe_border, alpha_int, has_pip=True, pip_active=safe_active, pip_col=(0, 240, 150))
 
-        # Razer Chroma [RAZER]
         if razer_mgr and razer_mgr.device_count > 0:
             rz_active = razer_mgr.enabled
-            rz_label = f"[RAZER] ({razer_mgr.device_count})"
+            rz_label = f"Razer ({razer_mgr.device_count})"
             rz_bg = (12, 48, 22) if rz_active else (18, 24, 34)
             rz_border = (0, 255, 120) if rz_active else (60, 90, 75)
         else:
             rz_active = False
-            rz_label = "[RAZER] N/A"
+            rz_label = "Razer N/A"
             rz_bg = (18, 20, 28)
             rz_border = (50, 60, 75)
         self._render_button(hud_surf, self.btn_razer, rz_label, rz_bg, rz_border, alpha_int, has_pip=True, pip_active=rz_active, pip_col=(0, 255, 120))
 
-        # Room Lighting [ROOM]
         if happylighting_mgr:
             if happylighting_mgr.connected:
                 hl_active = happylighting_mgr.enabled
-                hl_label = "[ROOM] BLE"
+                hl_label = "Room BLE"
                 hl_bg = (12, 45, 55) if hl_active else (18, 24, 34)
                 hl_border = (0, 240, 255) if hl_active else (60, 80, 95)
                 hl_pip = (0, 240, 255)
             elif happylighting_mgr.enabled:
                 hl_active = True
-                hl_label = "[ROOM] SYNC"
+                hl_label = "Room Sync"
                 hl_bg = (45, 40, 18)
                 hl_border = (255, 210, 0)
                 hl_pip = (255, 210, 0)
             else:
                 hl_active = False
-                hl_label = "[ROOM] BLE"
+                hl_label = "Room BLE"
                 hl_bg = (18, 20, 28)
                 hl_border = (50, 60, 75)
                 hl_pip = None
         else:
             hl_active = False
-            hl_label = "[ROOM] N/A"
+            hl_label = "Room N/A"
             hl_bg = (18, 20, 28)
             hl_border = (50, 60, 75)
             hl_pip = None
         self._render_button(hud_surf, self.btn_room_lights, hl_label, hl_bg, hl_border, alpha_int, has_pip=True, pip_active=hl_active, pip_col=hl_pip)
 
-        # Lenovo Legion [LEGION]
         if lenovo_mgr and lenovo_mgr.connected:
             legion_active = lenovo_mgr.enabled
-            legion_label = "[LEGION] PC"
+            legion_label = "Legion PC"
             legion_bg = (14, 40, 58) if legion_active else (18, 24, 34)
             legion_border = (0, 190, 255) if legion_active else (60, 80, 95)
         else:
             legion_active = False
-            legion_label = "[LEGION] N/A"
+            legion_label = "Legion N/A"
             legion_bg = (18, 20, 28)
             legion_border = (50, 60, 75)
         self._render_button(hud_surf, self.btn_lenovo, legion_label, legion_bg, legion_border, alpha_int, has_pip=True, pip_active=legion_active, pip_col=(0, 190, 255))
 
-        # 5. Hotkey & System Telemetry Footer
-        hints = "// HOTKEYS: [ESC] Exit  [X] Overdrive  [A] AlbumArt  [C] Razer  [L] Room  [K] Legion  [F] Displays  [B] DualFX  [N] Sync  [M] Mode  [P] Palette  [S] Safe  [H] ToggleHUD"
-        hint_surf = self.font_tiny.render(hints, True, (130, 145, 170))
-        hud_surf.blit(hint_surf, (panel.x + (panel.width - hint_surf.get_width()) // 2, panel.bottom - 20))
+        # 5. Minimal Clean Footer
+        hints = "ESC Exit   O Solid   R Red   1 Bass   2 Smart   X Overdrive   A Album   C Razer   L Room   K Legion   M Mode   P Palette   TAB Hide"
+        hint_surf = self.font_tiny.render(hints, True, (120, 138, 165))
+        hud_surf.blit(hint_surf, (panel.x + (panel.width - hint_surf.get_width()) // 2, panel.bottom - 16))
 
         hud_surf.set_alpha(alpha_int)
         screen.blit(hud_surf, (0, 0))

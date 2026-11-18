@@ -78,7 +78,7 @@ class TestPaletteExtraction(unittest.TestCase):
             self.assertTrue(max(r, g, b) > 30)
 
     def test_single_color_artwork(self):
-        """Test single-dominant color artwork generates harmonic complementary contrast."""
+        """Test single-dominant color artwork generates rich tonal variations of that hue."""
         surf = pygame.Surface((100, 100))
         surf.fill((220, 20, 20))  # Pure crimson
 
@@ -88,9 +88,59 @@ class TestPaletteExtraction(unittest.TestCase):
 
         palette = extract_cover_palette(raw_bytes, num_colors=5)
         self.assertEqual(len(palette), 5)
-        # All colors should be valid RGB
+        # All colors should be valid RGB and in the red hue family
         for col in palette:
             self.assertEqual(len(col), 3)
+            r, g, b = col
+            self.assertTrue(r > max(g, b), f"Expected red dominant color, got {col}")
+
+    def test_dominant_orange_cover_art(self):
+        """Test album artwork dominated by orange produces a palette that is majority/wholly orange."""
+        surf = pygame.Surface((200, 200))
+        surf.fill((240, 115, 30))  # Frank Ocean Channel Orange hue
+        # Subtle white text overlay
+        pygame.draw.rect(surf, (255, 255, 255), (40, 90, 120, 20))
+
+        buf = io.BytesIO()
+        pygame.image.save(surf, buf, "PNG")
+        palette = extract_cover_palette(buf.getvalue(), num_colors=5)
+
+        self.assertEqual(len(palette), 5)
+        orange_count = 0
+        for r, g, b in palette:
+            h, s, v = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
+            hue_deg = h * 360.0
+            # Orange range: ~10 to 45 degrees
+            if 10.0 <= hue_deg <= 45.0 and s >= 0.50:
+                orange_count += 1
+
+        # At least 4 of 5 (80%+) or 5 of 5 must be in the orange hue family
+        self.assertGreaterEqual(orange_count, 4, f"Expected majority orange, got {orange_count}/5 in palette: {palette}")
+
+    def test_dominant_color_with_secondary_accent(self):
+        """Test artwork with dominant color (70% blue) and secondary accent (30% yellow) maintains majority dominant hue."""
+        surf = pygame.Surface((100, 100))
+        surf.fill((20, 80, 220))  # Dominant blue
+        pygame.draw.rect(surf, (245, 220, 20), (0, 0, 55, 55))  # Secondary yellow accent
+
+        buf = io.BytesIO()
+        pygame.image.save(surf, buf, "PNG")
+        palette = extract_cover_palette(buf.getvalue(), num_colors=5)
+
+        self.assertEqual(len(palette), 5)
+        # Dominant hue (blue: ~200-240 deg) should have majority (>= 3 of 5)
+        blue_count = 0
+        yellow_count = 0
+        for r, g, b in palette:
+            h, s, v = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
+            deg = h * 360.0
+            if 190.0 <= deg <= 250.0:
+                blue_count += 1
+            elif 40.0 <= deg <= 70.0:
+                yellow_count += 1
+
+        self.assertGreaterEqual(blue_count, 3, f"Expected at least 3 blue swatches, got {blue_count}: {palette}")
+        self.assertGreaterEqual(yellow_count, 1, f"Expected at least 1 yellow accent swatch, got {yellow_count}: {palette}")
 
 
 class TestVisualizerAlbumArtMode(unittest.TestCase):
@@ -357,6 +407,46 @@ class TestHUDIntegration(unittest.TestCase):
         self.assertIn("is_paused", info)
         self.assertIn("is_playing", info)
         self.assertIn("status", info)
+
+    def test_hud_panel_sleek_height(self):
+        """Verify HUD panel height is streamlined down to <= 300px to maximize visualizer screen space."""
+        hud = HUD(1280, 720)
+        self.assertLessEqual(hud.panel_rect.height, 300)
+        self.assertEqual(hud.panel_rect.height, 282)
+
+    def test_hud_sliders_horizontal_compact(self):
+        """Verify the 3 sliders (sensitivity, gain, decay) share the same horizontal row."""
+        hud = HUD(1280, 720)
+        self.assertEqual(hud.slider_sens_rect.y, hud.slider_gain_rect.y)
+        self.assertEqual(hud.slider_gain_rect.y, hud.slider_decay_rect.y)
+        self.assertLess(hud.slider_sens_rect.right, hud.slider_gain_rect.left)
+        self.assertLess(hud.slider_gain_rect.right, hud.slider_decay_rect.left)
+
+    def test_app_album_art_default(self):
+        """Verify BeatStrobeApp initializes with Album Cover Art mode active by default."""
+        from main import BeatStrobeApp
+        app = BeatStrobeApp()
+        try:
+            self.assertEqual(app.visualizer.mode, MODE_ALBUM_ART)
+            self.assertEqual(app.visualizer.palette_name, PALETTE_ALBUM_ART)
+        finally:
+            app.audio_mgr.stop()
+            app.media_mgr.stop()
+            app.razer_mgr.stop()
+            app.happylighting_mgr.stop()
+            app.lenovo_mgr.stop()
+            app.sync_mgr.stop()
+
+    def test_audio_device_selection_and_auto_spotify(self):
+        """Verify AudioCaptureManager device selection methods and Spotify auto-switch."""
+        from audio_capture import AudioCaptureManager, PROCTAP_AVAILABLE
+        mgr = AudioCaptureManager()
+        self.assertTrue(mgr.select_device(0))
+        self.assertEqual(mgr.current_device_index, 0)
+        if PROCTAP_AVAILABLE and "spotify" in mgr.devices:
+            success = mgr.select_device("spotify")
+            self.assertTrue(success)
+            self.assertEqual(mgr.devices[mgr.current_device_index], "spotify")
 
 
 if __name__ == "__main__":

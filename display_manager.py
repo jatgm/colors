@@ -8,6 +8,7 @@ import os
 import sys
 import ctypes
 import pygame
+from config import DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT
 user32 = None
 if sys.platform == "win32":
     try:
@@ -45,7 +46,7 @@ class DisplayManager:
     MODE_DUAL_SPAN = "Dual Monitor Fullscreen"
     MODE_MONITOR_1 = "Monitor 1 Fullscreen"
     MODE_MONITOR_2 = "Monitor 2 Fullscreen"
-    MODE_WINDOWED = "Windowed (1280x720)"
+    MODE_WINDOWED = f"Windowed ({DEFAULT_WINDOW_WIDTH}x{DEFAULT_WINDOW_HEIGHT})"
 
     def __init__(self):
         self.monitors = []
@@ -226,7 +227,7 @@ class DisplayManager:
 
         else:
             # Windowed mode
-            w, h = 1280, 720
+            w, h = DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT
             # Center on primary monitor
             m = self.monitors[0]
             x = m.left + (m.width - w) // 2

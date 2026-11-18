@@ -16,6 +16,17 @@ The application includes multi-computer synchronization over Bluetooth and local
 
 ---
 
+## Sleek Compact UI & Automatic Music Detection
+
+Beat Strobe features a streamlined, low-profile Heads-Up Display (HUD) optimized for maximum on-screen visualizer real estate:
+- **Maximized Screen Real Estate**: Streamlined HUD height (~282px) giving full priority to high-impact screen strobe visuals while keeping all essential controls immediately accessible.
+- **Automatic Spotify Detection**: Automatically detects when Spotify is running and isolates pure Spotify audio output from noisy background applications (with seamless fallback to System Audio loopback).
+- **Default Album Cover Art Synchronization**: Launches directly in Album Cover Art mode, capturing live track artwork and extracting dominant 5-color palettes in real-time.
+- **Consolidated Horizontal Control Deck**: Sensitivity, Preamp Gain, and Decay Rate sliders consolidated side-by-side into a single 3-column row with real-time numeric readouts.
+- **Clean DAW / Synth Aesthetic**: Noisy telemetry strings replaced with clean typography, compact status badges (`SPOTIFY`, `RAZER`, `ROOM`, `LEGION`, `HOST`/`CLIENT`), and interactive color swatches.
+
+---
+
 ## Crazy Overdrive Mode (Hotkey X)
 
 Turn displays into a high-intensity festival strobe rig:
@@ -86,15 +97,19 @@ The program automatically detects all connected monitors (e.g. two 1920x1080 mon
 
 ## Strobe Modes (Press M to Cycle)
 
-1. **Psycho Overdrive (Ultra)**: Stroboscopic burst trains, rapid complementary neon flips, hi-hat sparkles, and drop blitzes.
-2. **Machine-Gun Multi-Band**: Kicks, snares, and hi-hats excite independent strobe layers simultaneously.
-3. **Hyper Strobe Blitz**: High-frequency concert strobe simulation with instantaneous blackouts.
-4. **Hard Strobe (Classic Rave)**: Instant high-intensity color flash on every kick beat, decaying rapidly to pitch black.
-5. **Kick + Snare Dual**: Bass kick fires primary palette color; snare/clap fires a bright lightning-white accent strobe.
-6. **Smooth Rave Pulse**: Sinusoidal ambient glow that pulses gently with the music without harsh flickers.
-7. **Audio Reactive Spectrum**: Real-time continuous color synthesis based on live audio frequencies.
-8. **Chaos Blitz**: High-energy randomized neon color bursts on every transient drop.
-9. **Monochrome Blitz**: Pure high-contrast black and white strobe flashes.
+1. **Strobe 2.0 (Smart Sync)**: Intelligent musical structure tracking (verse, buildup, chorus drops) with melody pitch progression and heavy 808 / snare emphasis.
+2. **Psycho Overdrive (Ultra)**: Stroboscopic burst trains, rapid complementary neon flips, hi-hat sparkles, and drop blitzes.
+3. **Red Only (Pure Red Strobe)**: High-intensity pure red strobe flashes (RGB 255, 0, 0) on every beat with absolute pitch-black cutoffs between strikes.
+4. **Bass Only (Pure Low-End Strobe)**: Strictly reacts to kicks, 808s, and heavy sub-bass beats with absolute blackouts between hits (completely ignores snares, hi-hats, mids, and vocals).
+5. **Cover Art Sync**: Real-time sync with dominant colors extracted from Windows Media playback album covers.
+6. **Machine-Gun Multi-Band**: Kicks, snares, and hi-hats excite independent strobe layers simultaneously.
+7. **Hyper Strobe Blitz**: High-frequency concert strobe simulation with instantaneous blackouts.
+8. **Hard Strobe (Classic Rave)**: Instant high-intensity color flash on every kick beat, decaying rapidly to pitch black.
+9. **Kick + Snare Dual**: Bass kick fires primary palette color; snare/clap fires a bright lightning-white accent strobe.
+10. **Smooth Rave Pulse**: Sinusoidal ambient glow that pulses gently with the music without harsh flickers.
+11. **Audio Reactive Spectrum**: Real-time continuous color synthesis based on live audio frequencies.
+12. **Chaos Blitz**: High-energy randomized neon color bursts on every transient drop.
+13. **Monochrome Blitz**: Pure high-contrast black and white strobe flashes.
 
 ---
 
@@ -128,11 +143,26 @@ Beat Strobe connects directly to the native Windows Runtime (`Windows.Media.Cont
 
 ---
 
+## Static Solid Color Lighting Mode (Hotkeys O / 4 / Z)
+
+Beat Strobe includes a dedicated static lighting system that transforms displays and peripherals into continuous ambient room lighting:
+
+- **1-Click Music vs Solid Toggle**: Click the prominent `[LIGHT] SOLID` / `[LIGHT] MUSIC` button on the HUD to immediately toggle between static illumination and audio-reactive strobe mode.
+- **Interactive Color Swatches Bar**: 14 hand-crafted vibrant color chips directly on the HUD (Pure Red, Orange Neon, Amber Gold, Electric Yellow, Lime Green, Mint Cyan, Sky Blue, Deep Blue, Violet, Magenta Pink, Hot Pink, Warm White, Pure White). Clicking any swatch instantly illuminates screens and hardware with that exact color.
+- **Continuous Hardware Illumination**: All hardware peripherals (Razer Chroma keyboards & mice, HappyLighting Bluetooth room light strips, and Lenovo Legion gaming desktop RGB) stay steadily lit with zero flickering, fading, or blackout strobe cuts.
+- **Hotkey Controls**: Press **`O`**, **`4`**, or **`Z`** to toggle between solid color mode and music strobing. When solid lighting is active, pressing **`P`** cycles through the solid color presets.
+
+---
+
 ## Controls and Shortcuts
 
 | Key | Action | Description |
 | :--- | :--- | :--- |
 | **`ESC`** | **Exit / Close Modal** | Closes active modal or exits the application safely. |
+| **`O`**, **`4`**, or **`Z`** | **Toggle Solid Color Lighting** | Toggles between static room illumination and music-reactive strobing. |
+| **`1`** or **`Q`** | **Toggle Bass Only Mode** | Toggles pure bass strobe (only reacts to kicks, 808s, and sub-bass). |
+| **`2`** or **`W`** | **Toggle Strobe 2.0** | Toggles smart section tracking (verse/buildup/chorus) and melody sync. |
+| **`3`** or **`R`** | **Toggle Red Only Mode** | Toggles pure crimson red strobe flashes on all beats. |
 | **`A`** | **Toggle Album Art Mode** | Toggles strobe mode & palette sync to currently playing album cover art. |
 | **`X`** | **Toggle CRAZY MODE** | Instantly toggles Crazy Overdrive strobe on/off. |
 | **`C`** | **Toggle Razer Chroma** | Toggles hardware RGB lighting sync for Razer keyboards & mice. |
@@ -140,10 +170,10 @@ Beat Strobe connects directly to the native Windows Runtime (`Windows.Media.Cont
 | **`K`** | **Toggle Legion PC RGB** | Toggles Lenovo Legion gaming desktop PC RGB lighting. |
 | **`N`** | **Bluetooth Sync Modal** | Opens the Multi-Computer Host & Client sync panel. |
 | **`F`** or **`F11`** | **Display Mode** | Cycles: Dual Monitor Fullscreen $\to$ Monitor 1 $\to$ Monitor 2 $\to$ Windowed. |
-| **`B`** or **`2`** | **Dual FX Scheme** | Cycles: Dual Synced $\to$ Ping-Pong Alternating $\to$ Complementary Contrast $\to$ Panoramic. |
+| **`B`** | **Dual FX Scheme** | Cycles: Dual Synced $\to$ Ping-Pong Alternating $\to$ Complementary Contrast $\to$ Panoramic. |
 | **`H`** or **`TAB`** | **Toggle HUD** | Shows or hides the control overlay (HUD auto-fades after 3.5s of mouse inactivity). |
-| **`M`** | **Cycle Strobe Mode** | Cycles through strobe modes (including [ALBUM] Cover Art Sync). |
-| **`P`** | **Cycle Palette** | Switches between color palettes (including [ALBUM] Cover Art). |
+| **`M`** | **Cycle Strobe Mode** | Cycles through strobe modes (including [BASS] Bass Only and [ALBUM] Cover Art). |
+| **`P`** | **Cycle Palette / Solid Color** | Cycles palettes in music mode, or cycles solid colors when solid lighting is active. |
 | **`V`** | **Cycle Visual Style** | Solid Fullscreen $\leftrightarrow$ Radial Shockwave $\leftrightarrow$ Horizon Pulse. |
 | **`D`** | **Switch Audio Source** | Cycles between System Audio Loopback, Monitors, and Microphones. |
 | **`S`** | **Safe Mode Toggle** | Toggles gentle pulsing glow vs intense hard strobe. |

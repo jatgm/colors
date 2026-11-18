@@ -6,7 +6,7 @@ Tests Razer Chroma, HappyLighting BLE, and Lenovo Legion RGB managers with Album
 import time
 import unittest
 import pygame
-from config import MODE_ALBUM_ART, PALETTE_ALBUM_ART
+from config import MODE_ALBUM_ART, PALETTE_ALBUM_ART, MODE_SPECTRUM, MODE_MONOCHROME
 from visualizer import VisualizerEngine
 from razer_chroma import RazerChromaManager
 from happylighting import HappyLightingManager
@@ -331,6 +331,266 @@ class TestHardwareSyncWithAlbumArt(unittest.TestCase):
         self.assertTrue(res["is_kick"], "Genuine kick transient was not detected above noise floor")
         self.assertGreater(res["bass_level"], 0.2)
 
+    def test_spotify_isolated_device_prioritized(self):
+        """Verify Spotify Isolated Audio is available while System Audio loopback is default."""
+        from audio_capture import AudioCaptureManager, PROCTAP_AVAILABLE
+        mgr = AudioCaptureManager()
+        if PROCTAP_AVAILABLE:
+            self.assertIn("spotify", mgr.devices)
+            self.assertTrue(any("Spotify" in name for name in mgr.device_names))
+            self.assertIn("System Audio", mgr.device_names[0])
+
+    def test_spotify_silence_reset_triggers_blackout(self):
+        """Verify _reset_to_silence clears all levels and triggers blackout."""
+        from audio_capture import AudioCaptureManager
+        mgr = AudioCaptureManager()
+        # Set some active states
+        with mgr.lock:
+            mgr.latest_state["is_kick"] = True
+            mgr.latest_state["bass_level"] = 0.95
+            mgr.latest_state["total_level"] = 0.90
+            mgr.latest_state["bpm"] = 128.0
+
+        # Reset to silence
+        mgr._reset_to_silence()
+        st = mgr.get_latest_state()
+        self.assertFalse(st["is_kick"])
+        self.assertEqual(st["bass_level"], 0.0)
+        self.assertEqual(st["total_level"], 0.0)
+    def test_happylighting_dual_channel_selection(self):
+        """Verify HappyLightingManager selects the active flashing channel in alternating multi-monitor setups."""
+        # 1. Left is black, right is cyan flash -> should select right channel
+        self.happy.set_colors((0, 0, 0), (0, 240, 255), strobe_cut=True)
+        with self.happy.lock:
+            self.assertEqual(self.happy._target_color, (0, 240, 255))
+
+        # 2. Left is magenta flash, right is black -> should select left channel
+        self.happy.set_colors((255, 0, 128), (0, 0, 0), strobe_cut=True)
+        with self.happy.lock:
+            self.assertEqual(self.happy._target_color, (255, 0, 128))
+
+        # 3. Both equal -> primary channel preserved
+        self.happy.set_colors((255, 100, 50), (255, 100, 50), strobe_cut=True)
+        with self.happy.lock:
+            self.assertEqual(self.happy._target_color, (255, 100, 50))
+
+    def test_happylighting_consecutive_beat_edge_detection(self):
+        """Verify consecutive beats on the same color increment flash trigger ID and are not dropped."""
+        # Beat 1 (Red)
+        self.happy.set_colors((255, 0, 0), strobe_cut=True)
+        with self.happy.lock:
+            id1 = self.happy._flash_trigger_id
+        self.assertGreater(id1, 0)
+
+        # Blackout cut
+        self.happy.set_colors((0, 0, 0), strobe_cut=True)
+
+        # Beat 2 (Red again - same color!)
+        self.happy.set_colors((255, 0, 0), strobe_cut=True)
+        with self.happy.lock:
+            id2 = self.happy._flash_trigger_id
+        self.assertGreater(id2, id1, "Consecutive beat with identical color failed to register edge trigger")
+
+    def test_peripheral_spectrum_mode_color_matching(self):
+        """Verify peripheral colors in Spectrum mode match audio frequency synthesis rather than palette."""
+        self.vis.set_mode(MODE_SPECTRUM)
+        # Heavy bass audio state (low mid, low high)
+        bass_audio = {
+            "total_level": 0.8,
+            "bass_level": 0.95,
+            "mid_level": 0.1,
+            "high_level": 0.05,
+            "raw_peak": 0.85,
+            "is_kick": True,
+            "is_snare": False,
+            "is_hihat": False,
+            "is_drop": False,
+            "is_paused": False,
+        }
+        surf = pygame.Surface((100, 100))
+        self.vis.render(surf, bass_audio)
+        self.vis.trigger_kick()
+
+        col_left, col_right, is_strobe = self.vis.get_peripheral_colors()
+        self.assertTrue(is_strobe)
+        # In spectrum bass kick, red component should dominate
+        r, g, b = col_left
+        self.assertGreater(r, g)
+        self.assertGreater(r, b)
+
+    def test_peripheral_monochrome_mode_white_matching(self):
+        """Verify peripheral colors in Monochrome mode produce pure white rather than colorful palette hues."""
+        self.vis.set_mode(MODE_MONOCHROME)
+        self.vis.trigger_kick()
+
+        col_left, col_right, is_strobe = self.vis.get_peripheral_colors()
+        self.assertTrue(is_strobe)
+        # Must be pure white (all channels equal to 255)
+        self.assertEqual(col_left, (255, 255, 255))
+        self.assertEqual(col_right, (255, 255, 255))
+
+    def test_peripheral_hihat_sparkle_micro_flash(self):
+        """Verify hi-hat sparkle triggers peripheral micro-flash window."""
+        self.vis.trigger_hihat()
+        col_left, col_right, is_strobe = self.vis.get_peripheral_colors()
+        self.assertTrue(is_strobe)
+        self.assertGreater(max(col_left), 0)
+
+    def test_happylighting_flash_id_tracking_without_blackout(self):
+        """Verify HappyLighting recognizes consecutive beats with identical color via flash_id."""
+        self.happy.set_colors((0, 255, 128), strobe_cut=True, flash_id=1)
+        with self.happy.lock:
+            id1 = self.happy._flash_trigger_id
+
+        # Second beat with identical color, NO intervening blackout, incremented flash_id
+        self.happy.set_colors((0, 255, 128), strobe_cut=True, flash_id=2)
+        with self.happy.lock:
+            id2 = self.happy._flash_trigger_id
+
+        self.assertGreater(id2, id1, "Consecutive beat with identical color failed to register edge trigger via flash_id")
+
+    def test_happylighting_ambient_to_strobe_transition(self):
+        """Verify transition from ambient glow to beat strobe triggers a flash pulse even with identical color."""
+        # Ambient mode with color
+        self.happy.set_colors((255, 80, 20), strobe_cut=False)
+        with self.happy.lock:
+            id1 = self.happy._flash_trigger_id
+
+        # Beat strobe strikes with the same color
+        self.happy.set_colors((255, 80, 20), strobe_cut=True)
+        with self.happy.lock:
+            id2 = self.happy._flash_trigger_id
+
+        self.assertGreater(id2, id1, "Ambient to strobe transition failed to trigger beat strike")
+
+    def test_dual_alternating_strobe_channel_isolation(self):
+        """Verify DUAL_SCHEME_ALTERNATING sets the idle monitor to blackout and active monitor to flash."""
+        from visualizer import DUAL_SCHEME_ALTERNATING
+        self.vis.dual_scheme = DUAL_SCHEME_ALTERNATING
+
+        # Beat 1: Side 0 (Left)
+        self.vis.alternating_side = 1  # will become 0 on trigger_kick
+        self.vis.trigger_kick()
+        self.assertEqual(self.vis.alternating_side, 0)
+        col_left, col_right, is_strobe = self.vis.get_peripheral_colors()
+        self.assertTrue(is_strobe)
+        self.assertGreater(max(col_left), 0)
+        self.assertEqual(col_right, (0, 0, 0))
+
+        # Beat 2: Side 1 (Right)
+        self.vis.trigger_kick()
+        self.assertEqual(self.vis.alternating_side, 1)
+        col_left, col_right, is_strobe = self.vis.get_peripheral_colors()
+        self.assertTrue(is_strobe)
+        self.assertEqual(col_left, (0, 0, 0))
+        self.assertGreater(max(col_right), 0)
+
+    def test_burst_train_chopped_blackout_peripherals(self):
+        """Verify peripherals chop to blackout during off-phases of multi-pulse burst trains."""
+        self.vis.trigger_kick()
+        # In flash phase
+        col_left, col_right, is_strobe = self.vis.get_peripheral_colors()
+        self.assertGreater(max(col_left), 0)
+
+        # Force burst chop off-phase
+        self.vis.burst_remaining = 3
+        self.vis.burst_is_on = False
+        col_left, col_right, is_strobe = self.vis.get_peripheral_colors()
+        self.assertEqual(col_left, (0, 0, 0))
+        self.assertEqual(col_right, (0, 0, 0))
+
+    def test_contrast_mode_channel_alternation(self):
+        """Verify contrast mode with two distinct saturated colors alternates active channel across beats."""
+        self.happy._contrast_toggle = 0
+        # Beat 1
+        self.happy.set_colors((255, 0, 0), (0, 0, 255), strobe_cut=True, flash_id=10)
+        with self.happy.lock:
+            col1 = self.happy._target_color
+
+        # Beat 2
+        self.happy.set_colors((255, 0, 0), (0, 0, 255), strobe_cut=True, flash_id=11)
+        with self.happy.lock:
+            col2 = self.happy._target_color
+
+        self.assertNotEqual(col1, col2)
+        self.assertIn(col1, [(255, 0, 0), (0, 0, 255)])
+        self.assertIn(col2, [(255, 0, 0), (0, 0, 255)])
+
+    def test_govee_ble_packet_constructors(self):
+        """Verify Govee BLE 20-byte packet structure and XOR checksum calculation."""
+        from happylighting import make_govee_color_packet, make_govee_power_packet
+
+        # 1. Color packet
+        pkt_col = make_govee_color_packet(255, 120, 60)
+        self.assertEqual(len(pkt_col), 20)
+        self.assertEqual(pkt_col[0], 0x33)
+        self.assertEqual(pkt_col[1], 0x05)
+        self.assertEqual(pkt_col[2], 0x02)
+        self.assertEqual(pkt_col[3], 255)
+        self.assertEqual(pkt_col[4], 120)
+        self.assertEqual(pkt_col[5], 60)
+        # Verify XOR checksum
+        cs = 0
+        for b in pkt_col[:19]:
+            cs ^= b
+        self.assertEqual(pkt_col[19], cs)
+
+        # 2. Power packet
+        pkt_pwr = make_govee_power_packet(True)
+        self.assertEqual(len(pkt_pwr), 20)
+        self.assertEqual(pkt_pwr[0], 0x33)
+        self.assertEqual(pkt_pwr[1], 0x01)
+        self.assertEqual(pkt_pwr[2], 0x01)
+        cs_pwr = 0
+        for b in pkt_pwr[:19]:
+            cs_pwr ^= b
+        self.assertEqual(pkt_pwr[19], cs_pwr)
+
+    def test_peripherals_active_on_soft_audio_with_agc(self):
+        """Verify peripherals remain armed and responsive when raw_peak is low but energy is present."""
+        audio_soft = {
+            "total_level": 0.25,
+            "bass_level": 0.30,
+            "mid_level": 0.20,
+            "high_level": 0.15,
+            "raw_peak": 0.002,
+            "is_kick": True,
+            "is_snare": False,
+            "is_hihat": False,
+            "is_drop": False,
+            "is_paused": False,
+        }
+        self.vis.update(0.016, audio_soft)
+        self.assertFalse(self.vis.is_audio_silent)
+        col_left, col_right, is_strobe = self.vis.get_peripheral_colors()
+        self.assertTrue(is_strobe)
+        self.assertGreater(max(col_left), 0)
+
+    def test_audio_in_strobes_when_media_manager_is_paused(self):
+        """Verify YouTube / Audio In strobing is never blocked by paused background media sessions."""
+        # Audio from YouTube video
+        youtube_audio = {
+            "total_level": 0.45,
+            "bass_level": 0.50,
+            "mid_level": 0.35,
+            "high_level": 0.20,
+            "raw_peak": 0.25,
+            "is_kick": True,
+            "is_snare": False,
+            "is_hihat": False,
+            "is_drop": False,
+            "is_paused": True,  # Simulates background Spotify being in paused state
+        }
+        self.vis.update(0.016, youtube_audio)
+        self.assertFalse(self.vis.is_audio_silent, "Live YouTube audio should not be marked silent")
+        self.assertEqual(self.vis.kick_intensity, 1.0)
+
+        col_left, col_right, is_strobe = self.vis.get_peripheral_colors()
+        self.assertTrue(is_strobe)
+        self.assertGreater(max(col_left), 0, "Peripheral lights should strobe on live YouTube audio")
+        self.assertGreater(max(col_right), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+

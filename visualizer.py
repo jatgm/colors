@@ -14,7 +14,10 @@ from config import (
     PALETTES,
     PALETTE_NAMES,
     PALETTE_ALBUM_ART,
+    MODE_STROBE_2_0,
     MODE_PSYCHO_OVERDRIVE,
+    MODE_RED_ONLY,
+    MODE_BASS_ONLY,
     MODE_ALBUM_ART,
     MODE_MACHINE_GUN,
     MODE_STROBE_BLITZ,
@@ -28,6 +31,9 @@ from config import (
     DEFAULT_DECAY_RATE,
     MIN_DECAY_RATE,
     MAX_DECAY_RATE,
+    SOLID_COLORS,
+    SOLID_COLOR_NAMES,
+    SOLID_COLOR_MAP,
 )
 
 # Dual Monitor Display Schemes
@@ -60,6 +66,11 @@ class VisualizerEngine:
         # Mode state (Default to Psycho Overdrive for maximum craze!)
         self.mode_index = 0
         self.mode = STROBE_MODES[self.mode_index]
+
+        # Solid Color Lighting State (Static continuous room & screen illumination)
+        self.solid_color_active = False
+        self.solid_color_index = 0
+        self.solid_color = SOLID_COLORS[self.solid_color_index][1]
 
         # Visual style
         self.visual_styles = ["Solid Fullscreen", "Radial Shockwave", "Horizon Pulse"]
@@ -120,11 +131,23 @@ class VisualizerEngine:
         self.peripheral_flash_until = 0.0
         self.peripheral_flash_color_left = (0, 0, 0)
         self.peripheral_flash_color_right = (0, 0, 0)
+        self.peripheral_flash_id = 0
 
         # Real-time music energy and audio silence state
         self.music_energy = 0.5
         self.is_paused = False
         self.is_audio_silent = False
+
+        # Strobe 2.0 section and melody tracking state
+        self.current_pitch_idx = 0
+        self.current_pitch_name = "C"
+        self.pitch_confidence = 0.0
+        self.is_chorus_active = False
+        self.is_buildup_active = False
+        self.is_verse_active = True
+        self.current_section_name = "VERSE"
+        self.section_energy_val = 1.0
+        self.is_808_active = False
 
     def resize(self, width, height):
         self.width = max(100, width)
@@ -147,9 +170,80 @@ class VisualizerEngine:
         if mode_name in STROBE_MODES:
             self.mode = mode_name
             self.mode_index = STROBE_MODES.index(mode_name)
+            self.solid_color_active = False
             if self.mode == MODE_ALBUM_ART:
                 self.set_palette(PALETTE_ALBUM_ART)
+            elif self.mode == MODE_RED_ONLY:
+                self.current_color = (255, 0, 0)
+                self.secondary_color = (255, 0, 0)
         return self.mode
+
+    def is_solid_color_active(self):
+        """Return True if static solid color override lighting is currently active."""
+        return self.solid_color_active
+
+    def toggle_solid_color(self):
+        """Toggle between static solid color lighting and music-reactive strobe mode."""
+        self.solid_color_active = not self.solid_color_active
+        return self.solid_color_active
+
+    def set_solid_color(self, color_or_idx, activate=True):
+        """
+        Set static solid color by index, preset name, or (R, G, B) tuple.
+        Optionally activates solid color mode.
+        """
+        if isinstance(color_or_idx, int):
+            self.solid_color_index = color_or_idx % len(SOLID_COLORS)
+            self.solid_color = SOLID_COLORS[self.solid_color_index][1]
+        elif isinstance(color_or_idx, str):
+            if color_or_idx in SOLID_COLOR_MAP:
+                self.solid_color = SOLID_COLOR_MAP[color_or_idx]
+                self.solid_color_index = SOLID_COLOR_NAMES.index(color_or_idx)
+        elif isinstance(color_or_idx, (tuple, list)) and len(color_or_idx) >= 3:
+            r = max(0, min(255, int(color_or_idx[0])))
+            g = max(0, min(255, int(color_or_idx[1])))
+            b = max(0, min(255, int(color_or_idx[2])))
+            self.solid_color = (r, g, b)
+            self.solid_color_index = -1
+            for i, (_, col) in enumerate(SOLID_COLORS):
+                if col == self.solid_color:
+                    self.solid_color_index = i
+                    break
+        if activate:
+            self.solid_color_active = True
+        return self.solid_color
+
+    def cycle_solid_color(self, step=1):
+        """Cycle through preset solid colors and activate solid lighting."""
+        self.solid_color_index = (self.solid_color_index + step) % len(SOLID_COLORS)
+        self.solid_color = SOLID_COLORS[self.solid_color_index][1]
+        self.solid_color_active = True
+        return self.solid_color
+
+    def get_solid_color_name(self):
+        """Return the display name of the currently selected solid color."""
+        if 0 <= self.solid_color_index < len(SOLID_COLORS):
+            return SOLID_COLORS[self.solid_color_index][0]
+        for name, col in SOLID_COLORS:
+            if col == self.solid_color:
+                return name
+        return f"RGB({self.solid_color[0]},{self.solid_color[1]},{self.solid_color[2]})"
+
+    def is_red_only_active(self):
+        return self.mode == MODE_RED_ONLY
+
+    def toggle_red_only(self):
+        """Toggle between Red Only Mode and previous strobe mode."""
+        if self.is_red_only_active():
+            prev_mode = getattr(self, "_prev_mode_before_red", MODE_STROBE_2_0)
+            if prev_mode == MODE_RED_ONLY:
+                prev_mode = MODE_STROBE_2_0
+            self.set_mode(prev_mode)
+            return False
+        else:
+            self._prev_mode_before_red = self.mode if self.mode != MODE_RED_ONLY else MODE_STROBE_2_0
+            self.set_mode(MODE_RED_ONLY)
+            return True
 
     def is_album_art_active(self):
         return self.mode == MODE_ALBUM_ART or self.palette_name == PALETTE_ALBUM_ART
@@ -167,6 +261,38 @@ class VisualizerEngine:
             if self.mode == MODE_ALBUM_ART and self.palette_name != PALETTE_ALBUM_ART:
                 self.palette_name = PALETTE_ALBUM_ART
                 self.palette_index = PALETTE_NAMES.index(PALETTE_ALBUM_ART)
+
+    def is_mode_2_0_active(self):
+        return self.mode == MODE_STROBE_2_0
+
+    def is_bass_only_active(self):
+        return self.mode == MODE_BASS_ONLY
+
+    def toggle_bass_only(self):
+        """Toggle between Bass Only Mode and previous strobe mode."""
+        if self.is_bass_only_active():
+            prev_mode = getattr(self, "_prev_mode_before_bass", MODE_STROBE_2_0)
+            if prev_mode == MODE_BASS_ONLY:
+                prev_mode = MODE_STROBE_2_0
+            self.set_mode(prev_mode)
+            return False
+        else:
+            self._prev_mode_before_bass = self.mode if self.mode != MODE_BASS_ONLY else MODE_STROBE_2_0
+            self.set_mode(MODE_BASS_ONLY)
+            return True
+
+    def toggle_mode_2_0(self):
+        """Toggle between Mode 2.0 (Smart Sync) and previous mode."""
+        if self.is_mode_2_0_active():
+            prev_mode = getattr(self, "_prev_mode_before_2_0", MODE_PSYCHO_OVERDRIVE)
+            if prev_mode == MODE_STROBE_2_0:
+                prev_mode = MODE_PSYCHO_OVERDRIVE
+            self.set_mode(prev_mode)
+            return False
+        else:
+            self._prev_mode_before_2_0 = self.mode if self.mode != MODE_STROBE_2_0 else MODE_PSYCHO_OVERDRIVE
+            self.set_mode(MODE_STROBE_2_0)
+            return True
 
     def toggle_album_art_mode(self):
         """Toggle between Album Art Mode/Palette and previous strobe mode/palette."""
@@ -192,6 +318,7 @@ class VisualizerEngine:
         return self.palette_name
 
     def cycle_mode(self):
+        self.solid_color_active = False
         self.mode_index = (self.mode_index + 1) % len(STROBE_MODES)
         self.mode = STROBE_MODES[self.mode_index]
         if self.mode == MODE_ALBUM_ART:
@@ -243,6 +370,9 @@ class VisualizerEngine:
             "dual_scheme": self.dual_scheme,
             "safe": bool(self.safe_mode),
             "overdrive": bool(self.overdrive_mode),
+            "solid_active": bool(self.solid_color_active),
+            "solid_color": [int(c) for c in self.solid_color],
+            "solid_color_index": int(self.solid_color_index),
             "decay": round(float(self.decay_rate), 1),
             "alternating_side": int(self.alternating_side),
             # Palette Colors
@@ -316,6 +446,12 @@ class VisualizerEngine:
             self.safe_mode = bool(pkt["safe"])
         if "overdrive" in pkt:
             self.overdrive_mode = bool(pkt["overdrive"])
+        if "solid_active" in pkt:
+            self.solid_color_active = bool(pkt["solid_active"])
+        if "solid_color" in pkt and isinstance(pkt["solid_color"], (list, tuple)) and len(pkt["solid_color"]) == 3:
+            self.solid_color = tuple(int(c) for c in pkt["solid_color"])
+        if "solid_color_index" in pkt:
+            self.solid_color_index = int(pkt["solid_color_index"])
         if "decay" in pkt:
             self.decay_rate = float(pkt["decay"])
         if "alternating_side" in pkt:
@@ -397,11 +533,16 @@ class VisualizerEngine:
     def get_peripheral_colors(self):
         """Calculate exact synchronized peripheral RGB colors for Razer hardware.
         Returns ((r_left, g_left, b_left), (r_right, g_right, b_right), is_strobe_mode).
+        When solid color mode is active, continuously output the solid color without strobe blackouts.
         In strobe modes: delivers 100% full-blast 255 peak color on beat impacts
         for exactly 80ms, followed by absolute pitch black (0, 0, 0) until the next beat.
         In smooth modes: delivers smooth pulsing rave colors.
         When silent or paused: delivers true blackout (0, 0, 0) across all peripherals.
         """
+        # Static Solid Color Mode: output full solid illumination without strobe cuts
+        if self.solid_color_active:
+            return self.solid_color, self.solid_color, False
+
         # True blackout across all peripherals if audio is silent (< 0.02) or media playback is paused/stopped
         if self.is_audio_silent or self.is_paused or (self.music_energy < 0.02 and self.kick_intensity < 0.01):
             is_strobe_mode = not (self.safe_mode or self.mode == MODE_SMOOTH_PULSE or self.mode == MODE_ALBUM_ART)
@@ -412,20 +553,47 @@ class VisualizerEngine:
             return self.last_render_rgb_0, self.last_render_rgb_1, False
 
         # Active strobe flash window
-        if time.perf_counter() < self.peripheral_flash_until:
+        is_flash_active = (time.perf_counter() < self.peripheral_flash_until)
+
+        # Chopped blackout during burst train off-phases (Martin Atomic simulation)
+        if self.burst_remaining > 0 and not self.burst_is_on:
+            is_flash_active = False
+
+        if is_flash_active:
             def _scale_flash(col):
                 r, g, b = col
                 max_c = max(r, g, b, 1)
                 scale = 255.0 / max_c
                 return (min(255, int(r * scale)), min(255, int(g * scale)), min(255, int(b * scale)))
 
-            col_left = _scale_flash(self.peripheral_flash_color_left)
-            col_right = _scale_flash(self.peripheral_flash_color_right)
+            if self.mode == MODE_MONOCHROME:
+                col_left = (255, 255, 255)
+                col_right = (255, 255, 255)
+            elif self.mode == MODE_RED_ONLY:
+                col_left = (255, 0, 0)
+                col_right = (255, 0, 0)
+            elif self.mode == MODE_SPECTRUM:
+                # Synchronize peripheral flash with the live audio reactive spectrum colors rendered on screen
+                spec_0 = self.last_render_rgb_0 if max(self.last_render_rgb_0) > 0 else (255, 80, 20)
+                spec_1 = self.last_render_rgb_1 if max(self.last_render_rgb_1) > 0 else spec_0
+                col_left = _scale_flash(spec_0)
+                col_right = _scale_flash(spec_1)
+            else:
+                col_left = _scale_flash(self.peripheral_flash_color_left)
+                col_right = _scale_flash(self.peripheral_flash_color_right)
+
+            # In Ping-Pong Alternating dual monitor scheme, selectively flash the active side
+            if self.dual_scheme == DUAL_SCHEME_ALTERNATING:
+                if self.alternating_side == 0:
+                    col_right = self.last_render_rgb_1 if self.mode in (MODE_ALBUM_ART, MODE_SPECTRUM) else (0, 0, 0)
+                else:
+                    col_left = self.last_render_rgb_0 if self.mode in (MODE_ALBUM_ART, MODE_SPECTRUM) else (0, 0, 0)
+
             return col_left, col_right, True
 
-        # In Album Art mode, preserve the vibrant ambient album cover glow between beat flashes
+        # In Album Art mode or Spectrum mode, preserve the vibrant ambient glow between beat flashes
         # so physical keyboard, mouse, room lights, and PC lighting remain synchronized and illuminated
-        if self.mode == MODE_ALBUM_ART:
+        if self.mode in (MODE_ALBUM_ART, MODE_SPECTRUM):
             return self.last_render_rgb_0, self.last_render_rgb_1, False
 
         # Blackout between beats in extreme strobe modes (Overdrive, Hard Strobe, etc.)
@@ -447,10 +615,10 @@ class VisualizerEngine:
             self.burst_is_on = True
 
         # Screen impact shake on heavy kicks
-        if self.overdrive_mode:
-            self.shake_decay = 0.12
-            self.shake_x = random.randint(-8, 8)
-            self.shake_y = random.randint(-6, 6)
+        if self.overdrive_mode or self.mode in (MODE_STROBE_2_0, MODE_BASS_ONLY):
+            self.shake_decay = 0.16 if (self.mode == MODE_STROBE_2_0 and getattr(self, "is_chorus_active", False)) else 0.12
+            self.shake_x = random.randint(-10, 10) if (self.mode == MODE_STROBE_2_0 and getattr(self, "is_chorus_active", False)) else random.randint(-8, 8)
+            self.shake_y = random.randint(-8, 8) if (self.mode == MODE_STROBE_2_0 and getattr(self, "is_chorus_active", False)) else random.randint(-6, 6)
 
         # Ping-pong alternate between left & right monitors
         self.alternating_side = 1 - self.alternating_side
@@ -459,8 +627,36 @@ class VisualizerEngine:
         else:
             self.kick_intensity_right = 1.0
 
-        # Advance colors with high contrast
-        if self.palette_name == "Rainbow Cycle":
+        # Advance colors with high contrast and melody pitch alignment
+        if self.mode == MODE_STROBE_2_0:
+            # Mode 2.0: Synchronize color selection with melody pitch and harmonic downbeat progression
+            pal_len = len(self.palette_colors)
+            pitch_idx = getattr(self, "current_pitch_idx", 0)
+            pitch_offset = int((pitch_idx / 12.0) * pal_len)
+            self.color_step = (self.color_step + 1) % pal_len
+            base_idx = (self.color_step + pitch_offset) % pal_len
+            self.current_color = self.palette_colors[base_idx]
+
+            # In chorus: high-contrast complementary interval, explosive burst, and shockwave
+            # In buildup: accelerating tension burst with harmonic progression
+            # In verse: clean, punchy single/dual pulse
+            if getattr(self, "is_chorus_active", False):
+                sec_step = max(1, pal_len // 2)
+                self.burst_remaining = max(self.burst_remaining, 6)
+                self.shake_decay = 0.18
+                self.shockwave_active = True
+                self.shockwave_radius = 0.0
+            elif getattr(self, "is_buildup_active", False):
+                sec_step = max(1, pal_len // 3)
+                self.burst_remaining = max(self.burst_remaining, 3)
+                self.shake_decay = 0.12
+            else:
+                sec_step = 1
+                self.shake_decay = 0.08
+
+            sec_idx = (base_idx + sec_step) % pal_len
+            self.secondary_color = self.palette_colors[sec_idx]
+        elif self.palette_name == "Rainbow Cycle":
             step = 0.18 if self.overdrive_mode else 0.125
             self.rainbow_hue = (self.rainbow_hue + step) % 1.0
             r, g, b = colorsys.hsv_to_rgb(self.rainbow_hue, 1.0, 1.0)
@@ -471,6 +667,16 @@ class VisualizerEngine:
             choices = [c for c in self.palette_colors if c != self.current_color]
             self.current_color = random.choice(choices) if choices else random.choice(self.palette_colors)
             self.secondary_color = random.choice(self.palette_colors)
+        elif self.mode == MODE_MONOCHROME:
+            self.current_color = (255, 255, 255)
+            self.secondary_color = (255, 255, 255)
+        elif self.mode == MODE_RED_ONLY:
+            self.current_color = (255, 0, 0)
+            self.secondary_color = (255, 0, 0)
+        elif self.mode == MODE_SPECTRUM:
+            spec_col = self.last_render_rgb_0 if max(self.last_render_rgb_0) > 0 else (255, 80, 20)
+            self.current_color = spec_col
+            self.secondary_color = spec_col
         else:
             self.color_step = (self.color_step + 1) % len(self.palette_colors)
             self.current_color = self.palette_colors[self.color_step]
@@ -478,13 +684,25 @@ class VisualizerEngine:
             self.secondary_color = self.palette_colors[sec_idx]
 
         # Arm peripheral flash for 80ms with full saturated palette color
+        self.peripheral_flash_id += 1
         self.peripheral_flash_until = time.perf_counter() + 0.080
-        self.peripheral_flash_color_left = self.current_color
-        self.peripheral_flash_color_right = (
-            self.secondary_color
-            if self.dual_scheme in (DUAL_SCHEME_CONTRAST, DUAL_SCHEME_ALTERNATING)
-            else self.current_color
-        )
+        if self.mode == MODE_MONOCHROME:
+            self.peripheral_flash_color_left = (255, 255, 255)
+            self.peripheral_flash_color_right = (255, 255, 255)
+        elif self.mode == MODE_RED_ONLY:
+            self.peripheral_flash_color_left = (255, 0, 0)
+            self.peripheral_flash_color_right = (255, 0, 0)
+        elif self.mode == MODE_SPECTRUM:
+            spec_col = self.last_render_rgb_0 if max(self.last_render_rgb_0) > 0 else (255, 80, 20)
+            self.peripheral_flash_color_left = spec_col
+            self.peripheral_flash_color_right = spec_col
+        else:
+            self.peripheral_flash_color_left = self.current_color
+            self.peripheral_flash_color_right = (
+                self.secondary_color
+                if self.dual_scheme in (DUAL_SCHEME_CONTRAST, DUAL_SCHEME_ALTERNATING)
+                else self.current_color
+            )
 
     def trigger_snare(self):
         """Trigger snare/clap accent flash."""
@@ -497,13 +715,25 @@ class VisualizerEngine:
         # Arm peripheral and PC flash for 60ms accent if not in an active longer flash
         now = time.perf_counter()
         if now + 0.060 > self.peripheral_flash_until:
+            self.peripheral_flash_id += 1
             self.peripheral_flash_until = now + 0.060
-            self.peripheral_flash_color_left = (
-                self.secondary_color
-                if self.dual_scheme in (DUAL_SCHEME_CONTRAST, DUAL_SCHEME_ALTERNATING)
-                else self.current_color
-            )
-            self.peripheral_flash_color_right = self.secondary_color
+            if self.mode == MODE_MONOCHROME:
+                self.peripheral_flash_color_left = (255, 255, 255)
+                self.peripheral_flash_color_right = (255, 255, 255)
+            elif self.mode == MODE_RED_ONLY:
+                self.peripheral_flash_color_left = (255, 0, 0)
+                self.peripheral_flash_color_right = (255, 0, 0)
+            elif self.mode == MODE_SPECTRUM:
+                spec_col = self.last_render_rgb_0 if max(self.last_render_rgb_0) > 0 else (255, 255, 255)
+                self.peripheral_flash_color_left = spec_col
+                self.peripheral_flash_color_right = spec_col
+            else:
+                self.peripheral_flash_color_left = (
+                    self.secondary_color
+                    if self.dual_scheme in (DUAL_SCHEME_CONTRAST, DUAL_SCHEME_ALTERNATING)
+                    else self.current_color
+                )
+                self.peripheral_flash_color_right = self.secondary_color
 
     def trigger_hihat(self):
         """Trigger hi-hat rapid micro-sparkle strobe."""
@@ -511,6 +741,19 @@ class VisualizerEngine:
         self.is_audio_silent = False
         self.hihat_intensity = 1.0
         self.hihat_hold_timer = 0.020
+        # Arm peripheral flash for 35ms micro-sparkle if not in an active longer kick flash
+        now = time.perf_counter()
+        if now + 0.035 > self.peripheral_flash_until:
+            self.peripheral_flash_id += 1
+            self.peripheral_flash_until = now + 0.035
+            if self.mode == MODE_MONOCHROME:
+                hi_col = (255, 255, 255)
+            elif self.mode == MODE_RED_ONLY:
+                hi_col = (255, 0, 0)
+            else:
+                hi_col = (200, 255, 255)
+            self.peripheral_flash_color_left = hi_col
+            self.peripheral_flash_color_right = hi_col
 
     def trigger_drop(self):
         """Trigger massive bass drop surge."""
@@ -521,11 +764,15 @@ class VisualizerEngine:
         self.snare_intensity = 1.0
         self.kick_hold_timer = 0.060
         self.burst_remaining = 5  # 5-pulse machine-gun blast
+        self.shockwave_active = True
+        self.shockwave_radius = 0.0
 
-        # Massive bass drop: 90ms phosphor white blast
+        # Massive bass drop: 90ms blast
+        self.peripheral_flash_id += 1
         self.peripheral_flash_until = time.perf_counter() + 0.090
-        self.peripheral_flash_color_left = (255, 255, 255)
-        self.peripheral_flash_color_right = (255, 255, 255)
+        drop_col = (255, 0, 0) if self.mode == MODE_RED_ONLY else (255, 255, 255)
+        self.peripheral_flash_color_left = drop_col
+        self.peripheral_flash_color_right = drop_col
 
     def update(self, dt, audio_state):
         """Update strobe decay physics, burst pulse generator, and shake."""
@@ -534,8 +781,18 @@ class VisualizerEngine:
             audio_state.get("bass_level", 0.0) * 0.85,
             audio_state.get("mid_level", 0.0) * 0.55,
         )
-        self.is_paused = bool(audio_state.get("is_paused", False))
-        self.is_audio_silent = (self.music_energy < 0.02) or (audio_state.get("raw_peak", 1.0) < 0.005) or self.is_paused
+        self.is_paused = bool(audio_state.get("is_paused", False)) and (self.music_energy < 0.05)
+        self.is_audio_silent = (self.music_energy < 0.02) or (audio_state.get("raw_peak", 1.0) < 0.0005) or self.is_paused
+
+        # Strobe 2.0 State Tracking (Melody Pitch & Structure: Verse, Buildup, Chorus)
+        self.current_pitch_idx = int(audio_state.get("pitch_idx", 0))
+        self.current_pitch_name = audio_state.get("pitch_name", "C")
+        self.pitch_confidence = float(audio_state.get("pitch_confidence", 0.0))
+        self.is_chorus_active = bool(audio_state.get("is_chorus", False))
+        self.is_buildup_active = bool(audio_state.get("is_buildup", False))
+        self.is_verse_active = bool(audio_state.get("is_verse", True))
+        self.current_section_name = str(audio_state.get("section_name", "VERSE"))
+        self.section_energy_val = float(audio_state.get("section_energy", 1.0))
 
         if self.is_audio_silent:
             # When music is off, silent, or paused, disarm bursts and peripheral flashes
@@ -543,14 +800,25 @@ class VisualizerEngine:
             self.shockwave_active = False
             self.peripheral_flash_until = 0.0
         else:
-            if audio_state.get("is_drop", False):
-                self.trigger_drop()
-            if audio_state.get("is_kick", False):
-                self.trigger_kick()
-            if audio_state.get("is_snare", False):
-                self.trigger_snare()
-            if audio_state.get("is_hihat", False):
-                self.trigger_hihat()
+            if self.mode == MODE_BASS_ONLY:
+                # Bass Only Mode: strictly triggers on kicks, 808s, and heavy sub-bass hits
+                # All snares, hi-hats, mids, and non-bass transients are completely ignored
+                if audio_state.get("is_kick", False) or audio_state.get("is_808", False):
+                    self.trigger_kick()
+                elif audio_state.get("is_drop", False) and audio_state.get("sub_bass_level", 0.0) > 0.40:
+                    self.trigger_kick()
+                self.snare_intensity = 0.0
+                self.hihat_intensity = 0.0
+                self.drop_intensity = 0.0
+            else:
+                if audio_state.get("is_drop", False):
+                    self.trigger_drop()
+                if audio_state.get("is_kick", False) or audio_state.get("is_808", False):
+                    self.trigger_kick()
+                if audio_state.get("is_snare", False):
+                    self.trigger_snare()
+                if audio_state.get("is_hihat", False) and self.mode != MODE_STROBE_2_0:
+                    self.trigger_hihat()
 
         # Stroboscopic Multi-Pulse Burst Generator
         if self.burst_remaining > 0:
@@ -558,7 +826,9 @@ class VisualizerEngine:
             if self.burst_timer >= self.burst_period:
                 self.burst_timer = 0.0
                 self.burst_is_on = not self.burst_is_on
-                if not self.burst_is_on:
+                if self.burst_is_on:
+                    self.peripheral_flash_id += 1
+                else:
                     self.burst_remaining -= 1
                     if self.burst_remaining <= 0:
                         self.burst_is_on = True
@@ -605,19 +875,43 @@ class VisualizerEngine:
 
     def _calc_color_and_intensity(self, base_col, intensity, audio_state):
         """Calculate final RGB with vibrant ambient music glow, extreme strobe contrast, burst chopping, and phosphor white flares."""
-        music_energy = max(
-            audio_state.get("total_level", 0.0) * 0.75,
-            audio_state.get("bass_level", 0.0) * 0.85,
-            audio_state.get("mid_level", 0.0) * 0.55,
-        )
+        if self.solid_color_active:
+            return self.solid_color, 1.0
+
         is_paused = bool(audio_state.get("is_paused", False))
-        is_silent = (music_energy < 0.02) or is_paused
+        if self.mode == MODE_BASS_ONLY:
+            # Pure Bass Mode: energy derived strictly from low-end sub-bass and kick frequencies.
+            # Mids, vocals, guitars, and highs have zero impact.
+            music_energy = max(
+                audio_state.get("bass_level", 0.0) * 0.90,
+                audio_state.get("sub_bass_level", 0.0) * 1.0,
+            )
+            is_silent = (music_energy < 0.02) or (is_paused and music_energy < 0.05)
+            ambient_floor = min(0.18, max(0.0, (music_energy - 0.35) * 0.40))
+        else:
+            music_energy = max(
+                audio_state.get("total_level", 0.0) * 0.75,
+                audio_state.get("bass_level", 0.0) * 0.85,
+                audio_state.get("mid_level", 0.0) * 0.55,
+            )
+            is_silent = (music_energy < 0.02) or (is_paused and music_energy < 0.05)
+            ambient_floor = min(0.32, music_energy * 0.50)
 
         # True pitch black blackout whenever music is off, silent, or paused
         if is_silent:
             return (0, 0, 0), 0.0
 
-        ambient_floor = min(0.32, music_energy * 0.50)
+        # Sync section states from audio_state if available
+        if "is_chorus" in audio_state:
+            self.is_chorus_active = bool(audio_state.get("is_chorus", False))
+        if "is_buildup" in audio_state:
+            self.is_buildup_active = bool(audio_state.get("is_buildup", False))
+        if "is_verse" in audio_state:
+            self.is_verse_active = bool(audio_state.get("is_verse", True))
+        if "section_energy" in audio_state:
+            self.section_energy_val = float(audio_state.get("section_energy", 1.0))
+        if "section_name" in audio_state:
+            self.current_section_name = str(audio_state.get("section_name", "VERSE"))
 
         # Strobe pulse gating (chopping for stroboscopic effect)
         chopped_intensity = intensity
@@ -633,6 +927,12 @@ class VisualizerEngine:
                 eff_intensity = min(1.0, chopped_intensity * 1.35)
             else:
                 eff_intensity = 0.0
+        elif self.mode == MODE_BASS_ONLY:
+            # Pure Bass Strobe: explosive flashes strictly on bass impacts with true pitch black between hits
+            if chopped_intensity > 0.01:
+                eff_intensity = min(1.0, chopped_intensity * 1.30)
+            else:
+                eff_intensity = ambient_floor  # Pure black unless sustaining heavy sub-bass
         elif self.mode == MODE_ALBUM_ART:
             # Album art sync: explosive saturated flashes of album colors with responsive ambient music floor
             if chopped_intensity > 0.01:
@@ -647,6 +947,28 @@ class VisualizerEngine:
                 eff_intensity = 0.0
         elif self.mode == MODE_SPECTRUM:
             eff_intensity = max(0.18, min(1.0, 0.22 + audio_state.get("total_level", 0.0) * 0.45 + chopped_intensity * 0.65))
+        elif self.mode == MODE_STROBE_2_0:
+            # Strobe 2.0: Dynamic section physics with heavy 808 and snare drum dominance
+            drum_strike = max(chopped_intensity, self.snare_intensity * 0.95)
+            if self.is_chorus_active:
+                # Chorus: Explosive stroboscopic impact with high contrast and deep blackouts between hits
+                if drum_strike > 0.02:
+                    eff_intensity = min(1.0, drum_strike * 1.35)
+                else:
+                    eff_intensity = ambient_floor * 0.08  # Deep contrast between explosive hits
+            elif self.is_buildup_active:
+                # Buildup: Tension climbing! Ambient background lifts as riser ascends
+                sec_lift = min(0.35, max(0.0, (self.section_energy_val - 1.0) * 0.5)) if self.section_energy_val > 1.0 else 0.10
+                if drum_strike > 0.02:
+                    eff_intensity = min(1.0, drum_strike * 1.15 + sec_lift)
+                else:
+                    eff_intensity = min(0.60, ambient_floor * 0.40 + sec_lift)
+            else:
+                # Verse: Clean, punchy rhythmic groove with focused dynamic contrast
+                if drum_strike > 0.02:
+                    eff_intensity = min(1.0, drum_strike * 1.25)
+                else:
+                    eff_intensity = ambient_floor * 0.12
         else:
             # Strobe Blitz, Machine Gun, Chaos Blitz, Monochrome, Dual Strobe
             if chopped_intensity > 0.01:
@@ -661,6 +983,9 @@ class VisualizerEngine:
         if self.mode == MODE_MONOCHROME:
             val = int(255 * gamma_intensity)
             r, g, b = val, val, val
+        elif self.mode == MODE_RED_ONLY:
+            val = int(255 * gamma_intensity)
+            r, g, b = val, 0, 0
         elif self.mode == MODE_SPECTRUM:
             bass = audio_state.get("bass_level", 0.0)
             mid = audio_state.get("mid_level", 0.0)
@@ -681,9 +1006,25 @@ class VisualizerEngine:
                 g = min(255, g + white_flare)
                 b = min(255, b + white_flare)
 
-        # Snare Accent Flash
-        if self.snare_intensity > 0.01:
-            if self.mode in (MODE_DUAL_STROBE, MODE_MACHINE_GUN, MODE_PSYCHO_OVERDRIVE):
+        # Snare Accent Flash (suppressed in Bass Only mode)
+        if self.snare_intensity > 0.01 and self.mode != MODE_BASS_ONLY:
+            if self.mode == MODE_RED_ONLY:
+                # In Red Only mode: boost red channel only, zero bleed into green/blue
+                snare_add = int(140 * self.snare_intensity)
+                r = min(255, r + snare_add)
+            elif self.mode == MODE_STROBE_2_0:
+                # In Strobe 2.0: Snap snare hits to secondary contrast color instead of flat whitewashing
+                sec_c = getattr(self, "secondary_color", (0, 240, 255))
+                snare_ratio = min(1.0, self.snare_intensity * 0.85)
+                r = int(r * (1.0 - snare_ratio * 0.5) + sec_c[0] * snare_ratio)
+                g = int(g * (1.0 - snare_ratio * 0.5) + sec_c[1] * snare_ratio)
+                b = int(b * (1.0 - snare_ratio * 0.5) + sec_c[2] * snare_ratio)
+                if self.is_chorus_active and self.snare_intensity > 0.70:
+                    edge = int(60 * self.snare_intensity)
+                    r = min(255, r + edge)
+                    g = min(255, g + edge)
+                    b = min(255, b + edge)
+            elif self.mode in (MODE_DUAL_STROBE, MODE_MACHINE_GUN, MODE_PSYCHO_OVERDRIVE):
                 snare_val = int(255 * self.snare_intensity)
                 r = min(255, r + snare_val)
                 g = min(255, g + snare_val)
@@ -694,20 +1035,28 @@ class VisualizerEngine:
                 g = min(255, g + snare_add)
                 b = min(255, b + snare_add)
 
-        # Hi-Hat Sparkle Strobe (High-frequency sizzle)
-        if self.hihat_intensity > 0.01 and not self.safe_mode:
-            hi_val = int(180 * self.hihat_intensity)
-            r = min(255, r + int(hi_val * 0.7))
-            g = min(255, g + hi_val)
-            b = min(255, b + hi_val)
+        # Hi-Hat Sparkle Strobe (High-frequency sizzle) - disabled in Strobe 2.0 and Bass Only mode
+        if self.hihat_intensity > 0.01 and not self.safe_mode and self.mode not in (MODE_STROBE_2_0, MODE_BASS_ONLY):
+            if self.mode == MODE_RED_ONLY:
+                r = min(255, r + int(180 * self.hihat_intensity))
+            else:
+                hi_val = int(180 * self.hihat_intensity)
+                r = min(255, r + int(hi_val * 0.7))
+                g = min(255, g + hi_val)
+                b = min(255, b + hi_val)
 
         # Heavy Drop / Blinding White Overdrive Blast
         if self.drop_intensity > 0.05 and not self.safe_mode:
-            drop_white = int(255 * self.drop_intensity)
-            r = min(255, r + drop_white)
-            g = min(255, g + drop_white)
-            b = min(255, b + drop_white)
-
+            if self.mode == MODE_RED_ONLY:
+                r = min(255, r + int(255 * self.drop_intensity))
+            else:
+                drop_white = int(255 * self.drop_intensity)
+                r = min(255, r + drop_white)
+                g = min(255, g + drop_white)
+        # Clamp final RGB strictly to [0, 255] integer range to prevent Pygame color ValueError
+        r = max(0, min(255, int(round(r))))
+        g = max(0, min(255, int(round(g))))
+        b = max(0, min(255, int(round(b))))
         return (r, g, b), eff_intensity
 
     def render(self, screen, audio_state, monitors=None, is_dual=False, is_client_sync=False):
@@ -718,11 +1067,12 @@ class VisualizerEngine:
             audio_state.get("mid_level", 0.0) * 0.55,
         )
         self.music_energy = music_energy
-        self.is_paused = bool(audio_state.get("is_paused", False))
-        self.is_audio_silent = (music_energy < 0.02) or (audio_state.get("raw_peak", 1.0) < 0.005) or self.is_paused
+        self.is_paused = bool(audio_state.get("is_paused", False)) and (music_energy < 0.05)
+        self.is_audio_silent = (music_energy < 0.02) or (audio_state.get("raw_peak", 1.0) < 0.0005) or self.is_paused
 
-        # Screen shake offset
-        sx, sy = self.shake_x, self.shake_y
+        # Screen shake offset (bypassed in solid color mode)
+        sx = 0 if self.solid_color_active else self.shake_x
+        sy = 0 if self.solid_color_active else self.shake_y
 
         if is_dual and monitors and len(monitors) >= 2:
             self._render_dual(screen, audio_state, monitors, sx, sy, is_client_sync=is_client_sync)
@@ -743,6 +1093,17 @@ class VisualizerEngine:
                 self.last_eff_intensity_1 = self.last_eff_intensity_0
 
     def _render_single(self, screen, audio_state, rect, custom_col=None, custom_intensity=None, monitor_idx=0, forced_rgb=None, forced_eff=None):
+        if self.solid_color_active and forced_rgb is None:
+            r, g, b = self.solid_color
+            screen.fill((r, g, b), rect)
+            if monitor_idx == 0:
+                self.last_render_rgb_0 = (r, g, b)
+                self.last_eff_intensity_0 = 1.0
+            else:
+                self.last_render_rgb_1 = (r, g, b)
+                self.last_eff_intensity_1 = 1.0
+            return (r, g, b), 1.0
+
         if forced_rgb is not None:
             r, g, b = forced_rgb
             eff_intensity = forced_eff if forced_eff is not None else 1.0
@@ -750,6 +1111,10 @@ class VisualizerEngine:
             base_col = custom_col if custom_col is not None else self.current_color
             intensity = custom_intensity if custom_intensity is not None else self.kick_intensity
             (r, g, b), eff_intensity = self._calc_color_and_intensity(base_col, intensity, audio_state)
+
+        r = max(0, min(255, int(r)))
+        g = max(0, min(255, int(g)))
+        b = max(0, min(255, int(b)))
 
         if monitor_idx == 0:
             self.last_render_rgb_0 = (r, g, b)
@@ -774,7 +1139,7 @@ class VisualizerEngine:
                 wave_alpha = int(255 * (1.0 - progress) * eff_intensity)
                 if wave_alpha > 0:
                     wave_surf = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
-                    ring_color = (min(255, r + 70), min(255, g + 70), min(255, b + 70), wave_alpha)
+                    ring_color = (min(255, r + 70), 0, 0, wave_alpha) if self.mode == MODE_RED_ONLY else (min(255, r + 70), min(255, g + 70), min(255, b + 70), wave_alpha)
                     thickness = max(10, int(50 * (1.0 - progress)))
                     curr_rad = int(progress * max_rad)
                     pygame.draw.circle(wave_surf, ring_color, (rect.width // 2, rect.height // 2), curr_rad, thickness)
@@ -786,9 +1151,10 @@ class VisualizerEngine:
                 for ring in range(3, 0, -1):
                     rad = int(center_rad * (ring / 3.0))
                     alpha = int((110 / ring) * eff_intensity)
+                    center_col = (min(255, r + 50), 0, 0, alpha) if self.mode == MODE_RED_ONLY else (min(255, r + 50), min(255, g + 50), min(255, b + 50), alpha)
                     pygame.draw.circle(
                         center_surf,
-                        (min(255, r + 50), min(255, g + 50), min(255, b + 50), alpha),
+                        center_col,
                         (center_rad, center_rad),
                         rad,
                     )

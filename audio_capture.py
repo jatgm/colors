@@ -1,16 +1,56 @@
-"""
-Audio capture engine using soundcard.
-Supports WASAPI desktop audio loopback (Spotify, YouTube, Games, etc.)
-and physical microphone input, with real-time thread-safe beat analysis
-and Dynamic Automatic Gain Control (AGC).
-"""
+import sys
+# Set COM threading flags to COINIT_MULTITHREADED to prevent conflicts between soundcard and pycaw/comtypes
+if not hasattr(sys, 'coinit_flags'):
+    sys.coinit_flags = 0
 
+import collections
 import threading
 import time
 import numpy as np
 import soundcard as sc
 from config import SAMPLE_RATE, CHUNK_SIZE
 from beat_detector import BeatDetector
+
+PROCTAP_AVAILABLE = False
+try:
+    import proctap
+    import pycaw.pycaw as pycaw
+    import psutil
+    PROCTAP_AVAILABLE = True
+except (ImportError, Exception):
+    pass
+
+DEVICE_SPOTIFY = "[App: Spotify] Isolated Audio"
+
+
+def find_spotify_audio_pid():
+    """Locate the active Spotify process ID generating audio."""
+    if not PROCTAP_AVAILABLE:
+        return None
+    spotify_pids = set()
+    try:
+        for p in psutil.process_iter(['pid', 'name']):
+            try:
+                if 'spotify' in p.info['name'].lower():
+                    spotify_pids.add(p.info['pid'])
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    if not spotify_pids:
+        return None
+
+    try:
+        sessions = pycaw.AudioUtilities.GetAllSessions()
+        for s in sessions:
+            proc = s.Process
+            if proc and proc.pid in spotify_pids:
+                return proc.pid
+    except Exception:
+        pass
+
+    return list(spotify_pids)[0] if spotify_pids else None
 
 
 class AudioCaptureManager:
@@ -20,6 +60,7 @@ class AudioCaptureManager:
         self.device_names = []
         self.current_device_index = 0
         self.current_device_name = "Default Output"
+        self.user_selected_device = False
 
         self.running = False
         self.thread = None
@@ -28,9 +69,11 @@ class AudioCaptureManager:
         # Shared state written by audio thread, read by render loop
         self.latest_state = {
             "is_kick": False,
+            "is_808": False,
             "is_snare": False,
             "is_hihat": False,
             "is_drop": False,
+            "sub_bass_level": 0.0,
             "bass_level": 0.0,
             "mid_level": 0.0,
             "high_level": 0.0,
@@ -44,6 +87,16 @@ class AudioCaptureManager:
             "raw_peak": 0.0,
             "agc_gain": 1.0,
             "preamp_gain": 1.8,
+            "chroma": np.zeros(12, dtype=np.float32),
+            "pitch_idx": 0,
+            "secondary_pitch_idx": 7,
+            "pitch_name": "C",
+            "pitch_confidence": 0.0,
+            "is_chorus": False,
+            "is_buildup": False,
+            "is_verse": True,
+            "section_name": "VERSE",
+            "section_energy": 1.0,
         }
 
         # Demo / Test mode (generates 128 BPM synthetic beats)
@@ -54,7 +107,7 @@ class AudioCaptureManager:
         self.refresh_devices()
 
     def refresh_devices(self):
-        """Discover all loopback output devices and microphones."""
+        """Discover all loopback output devices and microphones, with System Audio prioritized."""
         self.devices = []
         self.device_names = []
 
@@ -94,8 +147,8 @@ class AudioCaptureManager:
             sorted_devices.extend(other_loopbacks)
             sorted_devices.extend(physical_mics)
 
-            self.devices = sorted_devices
-            for d in self.devices:
+            for d in sorted_devices:
+                self.devices.append(d)
                 name_lower = d.name.lower()
                 is_virtual = any(v in name_lower for v in ("blackhole", "loopback", "soundflower", "vb-cable", "virtual audio", "stereo mix"))
                 tag = "[System Audio]" if (d.isloopback or is_virtual) else "[Mic]"
@@ -106,6 +159,11 @@ class AudioCaptureManager:
 
         except Exception:
             pass
+
+        # Also provide Spotify Isolated Audio as an optional specialized device
+        if PROCTAP_AVAILABLE:
+            self.devices.append("spotify")
+            self.device_names.append(DEVICE_SPOTIFY)
 
         if not self.devices:
             try:
@@ -119,6 +177,13 @@ class AudioCaptureManager:
         if self.devices:
             self.current_device_index = 0
             self.current_device_name = self.device_names[0]
+            # Automatically default to Spotify Isolated Audio if Spotify process is running
+            if PROCTAP_AVAILABLE and "spotify" in self.devices:
+                sp_pid = find_spotify_audio_pid()
+                if sp_pid is not None:
+                    sp_idx = self.devices.index("spotify")
+                    self.current_device_index = sp_idx
+                    self.current_device_name = self.device_names[sp_idx]
 
     def start(self):
         if self.running:
@@ -136,10 +201,13 @@ class AudioCaptureManager:
     def cycle_device(self):
         if not self.devices:
             return
+        self.user_selected_device = True
         next_idx = (self.current_device_index + 1) % len(self.devices)
-        self.switch_device(next_idx)
+        self.switch_device(next_idx, manual=True)
 
-    def switch_device(self, index):
+    def switch_device(self, index, manual=False):
+        if manual:
+            self.user_selected_device = True
         if not self.devices or index >= len(self.devices) or index == self.current_device_index:
             return
         was_running = self.running
@@ -148,6 +216,41 @@ class AudioCaptureManager:
         self.current_device_name = self.device_names[index]
         if was_running:
             self.start()
+
+    def select_device(self, dev_or_name, manual=False):
+        """Select a capture device by device object, name string, or index."""
+        if manual:
+            self.user_selected_device = True
+        if not self.devices:
+            return False
+        if isinstance(dev_or_name, int):
+            if 0 <= dev_or_name < len(self.devices):
+                if dev_or_name != self.current_device_index:
+                    self.switch_device(dev_or_name, manual=manual)
+                return True
+            return False
+
+        target_str = str(dev_or_name).lower()
+        for idx, (dev, name) in enumerate(zip(self.devices, self.device_names)):
+            if dev == dev_or_name or dev_or_name == name or target_str in str(dev).lower() or target_str in name.lower():
+                if idx != self.current_device_index:
+                    self.switch_device(idx, manual=manual)
+                return True
+        return False
+
+    def auto_select_spotify(self):
+        """Auto-switch to Spotify Isolated Audio if Spotify is active and user hasn't manually selected a device."""
+        if getattr(self, "user_selected_device", False):
+            return False
+        if not PROCTAP_AVAILABLE or "spotify" not in self.devices:
+            return False
+        sp_pid = find_spotify_audio_pid()
+        if sp_pid is not None:
+            sp_idx = self.devices.index("spotify")
+            if self.current_device_index != sp_idx:
+                self.switch_device(sp_idx)
+                return True
+        return False
 
     def toggle_demo_mode(self):
         self.demo_mode = not self.demo_mode
@@ -170,17 +273,155 @@ class AudioCaptureManager:
         with self.lock:
             self.latest_state["overdrive"] = enabled
 
+    def set_timeline_context(self, progress, duration=0.0, is_playing=True):
+        """Provide Spotify/OS media timeline context to calibrate song section priors."""
+        if hasattr(self, "detector") and self.detector:
+            self.detector.set_timeline_context(progress, duration, is_playing)
+
     def get_latest_state(self):
         with self.lock:
             state = dict(self.latest_state)
             self.latest_state["is_kick"] = False
+            self.latest_state["is_808"] = False
             self.latest_state["is_snare"] = False
             self.latest_state["is_hihat"] = False
             self.latest_state["is_drop"] = False
             return state
 
+    def _reset_to_silence(self):
+        """Immediately reset all audio levels and beat flags to blackout."""
+        with self.lock:
+            self.latest_state["is_kick"] = False
+            self.latest_state["is_808"] = False
+            self.latest_state["is_snare"] = False
+            self.latest_state["is_hihat"] = False
+            self.latest_state["is_drop"] = False
+            self.latest_state["sub_bass_level"] = 0.0
+            self.latest_state["bass_level"] = 0.0
+            self.latest_state["mid_level"] = 0.0
+            self.latest_state["high_level"] = 0.0
+            self.latest_state["hihat_level"] = 0.0
+            self.latest_state["total_level"] = 0.0
+            self.latest_state["spectrum_bars"] = np.zeros(24, dtype=np.float32)
+            self.latest_state["bpm"] = 0.0
+            self.latest_state["bpm_confidence"] = 0.0
+            self.latest_state["raw_waveform"] = np.zeros(CHUNK_SIZE, dtype=np.float32)
+            self.latest_state["raw_peak"] = 0.0
+            self.latest_state["chroma"] = np.zeros(12, dtype=np.float32)
+            self.latest_state["pitch_idx"] = 0
+            self.latest_state["secondary_pitch_idx"] = 7
+            self.latest_state["pitch_name"] = "C"
+            self.latest_state["pitch_confidence"] = 0.0
+            self.latest_state["is_chorus"] = False
+            self.latest_state["section_energy"] = 0.0
+
+    def _capture_spotify_worker(self):
+        """Capture isolated Spotify process audio via WASAPI process loopback."""
+        audio_buffer = collections.deque(maxlen=SAMPLE_RATE * 2)
+        last_data_time = [time.time()]
+
+        def _on_audio(data, *args):
+            if not data:
+                return
+            try:
+                samples = np.frombuffer(data, dtype=np.float32)
+                if len(samples) % 2 != 0:
+                    return
+                stereo = samples.reshape(-1, 2)
+                mono = np.mean(stereo, axis=1)
+                audio_buffer.extend(mono)
+                last_data_time[0] = time.time()
+            except Exception:
+                pass
+
+        while self.running and not self.demo_mode and self.devices and self.devices[self.current_device_index] == "spotify":
+            pid = find_spotify_audio_pid()
+            if not pid:
+                self._reset_to_silence()
+                time.sleep(0.5)
+                continue
+
+            try:
+                cap = proctap.ProcessAudioCapture(pid, on_data=_on_audio)
+                cap.start()
+                last_data_time[0] = time.time()
+
+                while self.running and not self.demo_mode and self.devices and self.devices[self.current_device_index] == "spotify":
+                    now = time.time()
+                    # If Spotify paused or stopped emitting data for > 0.35s, blackout
+                    if now - last_data_time[0] > 0.35:
+                        self._reset_to_silence()
+                        audio_buffer.clear()
+                        time.sleep(0.05)
+                        # Check if process died
+                        if not psutil.pid_exists(pid):
+                            break
+                        continue
+
+                    # Process accumulated audio in CHUNK_SIZE pieces
+                    processed_any = False
+                    while len(audio_buffer) >= CHUNK_SIZE:
+                        processed_any = True
+                        chunk = np.array([audio_buffer.popleft() for _ in range(CHUNK_SIZE)], dtype=np.float32)
+                        result = self.detector.process_audio(chunk)
+                        result["raw_waveform"] = chunk
+
+                        with self.lock:
+                            if result["is_kick"]:
+                                self.latest_state["is_kick"] = True
+                            if result.get("is_808"):
+                                self.latest_state["is_808"] = True
+                            if result["is_snare"]:
+                                self.latest_state["is_snare"] = True
+                            if result["is_hihat"]:
+                                self.latest_state["is_hihat"] = True
+                            if result["is_drop"]:
+                                self.latest_state["is_drop"] = True
+
+                            self.latest_state["sub_bass_level"] = result.get("sub_bass_level", 0.0)
+                            self.latest_state["bass_level"] = result["bass_level"]
+                            self.latest_state["mid_level"] = result["mid_level"]
+                            self.latest_state["high_level"] = result["high_level"]
+                            self.latest_state["hihat_level"] = result["hihat_level"]
+                            self.latest_state["total_level"] = result["total_level"]
+                            self.latest_state["spectrum_bars"] = result["spectrum_bars"]
+                            self.latest_state["bpm"] = result["bpm"]
+                            self.latest_state["bpm_confidence"] = result["bpm_confidence"]
+                            self.latest_state["raw_waveform"] = chunk
+                            self.latest_state["raw_peak"] = result.get("raw_peak", 0.0)
+                            self.latest_state["agc_gain"] = result.get("agc_gain", 1.0)
+                            self.latest_state["preamp_gain"] = result.get("preamp_gain", 1.8)
+                            self.latest_state["chroma"] = result.get("chroma", np.zeros(12, dtype=np.float32))
+                            self.latest_state["pitch_idx"] = result.get("pitch_idx", 0)
+                            self.latest_state["secondary_pitch_idx"] = result.get("secondary_pitch_idx", 7)
+                            self.latest_state["pitch_name"] = result.get("pitch_name", "C")
+                            self.latest_state["pitch_confidence"] = result.get("pitch_confidence", 0.0)
+                            self.latest_state["is_chorus"] = result.get("is_chorus", False)
+                            self.latest_state["is_buildup"] = result.get("is_buildup", False)
+                            self.latest_state["is_verse"] = result.get("is_verse", True)
+                            self.latest_state["section_name"] = result.get("section_name", "VERSE")
+                            self.latest_state["section_energy"] = result.get("section_energy", 1.0)
+
+                    if not processed_any:
+                        time.sleep(0.005)
+
+                try:
+                    cap.stop()
+                    cap.close()
+                except Exception:
+                    pass
+
+            except Exception:
+                self._reset_to_silence()
+                time.sleep(0.5)
+
     def _capture_worker(self):
         device = self.devices[self.current_device_index] if self.devices else None
+
+        # Dispatch to dedicated Spotify isolated capture worker
+        if device == "spotify":
+            self._capture_spotify_worker()
+            return
 
         demo_t = 0.0
         last_demo_time = time.time()
@@ -218,6 +459,8 @@ class AudioCaptureManager:
                 with self.lock:
                     if result["is_kick"]:
                         self.latest_state["is_kick"] = True
+                    if result.get("is_808"):
+                        self.latest_state["is_808"] = True
                     if result["is_snare"]:
                         self.latest_state["is_snare"] = True
                     if result["is_hihat"]:
@@ -225,6 +468,7 @@ class AudioCaptureManager:
                     if result["is_drop"]:
                         self.latest_state["is_drop"] = True
 
+                    self.latest_state["sub_bass_level"] = result.get("sub_bass_level", 0.0)
                     self.latest_state["bass_level"] = result["bass_level"]
                     self.latest_state["mid_level"] = result["mid_level"]
                     self.latest_state["high_level"] = result["high_level"]
@@ -237,6 +481,16 @@ class AudioCaptureManager:
                     self.latest_state["raw_peak"] = result.get("raw_peak", 0.0)
                     self.latest_state["agc_gain"] = result.get("agc_gain", 1.0)
                     self.latest_state["preamp_gain"] = result.get("preamp_gain", 1.8)
+                    self.latest_state["chroma"] = result.get("chroma", np.zeros(12, dtype=np.float32))
+                    self.latest_state["pitch_idx"] = result.get("pitch_idx", 0)
+                    self.latest_state["secondary_pitch_idx"] = result.get("secondary_pitch_idx", 7)
+                    self.latest_state["pitch_name"] = result.get("pitch_name", "C")
+                    self.latest_state["pitch_confidence"] = result.get("pitch_confidence", 0.0)
+                    self.latest_state["is_chorus"] = result.get("is_chorus", False)
+                    self.latest_state["is_buildup"] = result.get("is_buildup", False)
+                    self.latest_state["is_verse"] = result.get("is_verse", True)
+                    self.latest_state["section_name"] = result.get("section_name", "VERSE")
+                    self.latest_state["section_energy"] = result.get("section_energy", 1.0)
 
                 time.sleep(CHUNK_SIZE / SAMPLE_RATE * 0.85)
                 continue
@@ -260,6 +514,8 @@ class AudioCaptureManager:
                         with self.lock:
                             if result["is_kick"]:
                                 self.latest_state["is_kick"] = True
+                            if result.get("is_808"):
+                                self.latest_state["is_808"] = True
                             if result["is_snare"]:
                                 self.latest_state["is_snare"] = True
                             if result["is_hihat"]:
@@ -267,6 +523,7 @@ class AudioCaptureManager:
                             if result["is_drop"]:
                                 self.latest_state["is_drop"] = True
 
+                            self.latest_state["sub_bass_level"] = result.get("sub_bass_level", 0.0)
                             self.latest_state["bass_level"] = result["bass_level"]
                             self.latest_state["mid_level"] = result["mid_level"]
                             self.latest_state["high_level"] = result["high_level"]
@@ -279,6 +536,16 @@ class AudioCaptureManager:
                             self.latest_state["raw_peak"] = result.get("raw_peak", 0.0)
                             self.latest_state["agc_gain"] = result.get("agc_gain", 1.0)
                             self.latest_state["preamp_gain"] = result.get("preamp_gain", 1.8)
+                            self.latest_state["chroma"] = result.get("chroma", np.zeros(12, dtype=np.float32))
+                            self.latest_state["pitch_idx"] = result.get("pitch_idx", 0)
+                            self.latest_state["secondary_pitch_idx"] = result.get("secondary_pitch_idx", 7)
+                            self.latest_state["pitch_name"] = result.get("pitch_name", "C")
+                            self.latest_state["pitch_confidence"] = result.get("pitch_confidence", 0.0)
+                            self.latest_state["is_chorus"] = result.get("is_chorus", False)
+                            self.latest_state["is_buildup"] = result.get("is_buildup", False)
+                            self.latest_state["is_verse"] = result.get("is_verse", True)
+                            self.latest_state["section_name"] = result.get("section_name", "VERSE")
+                            self.latest_state["section_energy"] = result.get("section_energy", 1.0)
 
             except Exception:
                 time.sleep(0.2)

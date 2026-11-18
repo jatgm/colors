@@ -17,6 +17,7 @@ from config import (
     MIN_PREAMP_GAIN,
     MAX_PREAMP_GAIN,
     MODE_SMOOTH_PULSE,
+    MODE_ALBUM_ART,
 )
 from audio_capture import AudioCaptureManager
 from visualizer import VisualizerEngine
@@ -50,6 +51,10 @@ class BeatStrobeApp:
         self.lenovo_mgr = LenovoLegionManager()
         self.media_mgr = MediaArtManager()
         self.last_media_update_count = -1
+        self.last_spotify_check = 0.0
+
+        # Default to Album Cover Art Strobe Mode & Palette
+        self.visualizer.set_mode(MODE_ALBUM_ART)
 
         # Engage Crazy Overdrive Mode by default for maximum strobe intensity!
         self.audio_mgr.set_overdrive(True)
@@ -164,18 +169,33 @@ class BeatStrobeApp:
                         elif event.key == pygame.K_a:
                             # Toggle Album Cover Art Strobe Mode & Palette
                             self.visualizer.toggle_album_art_mode()
+                        elif event.key in (pygame.K_1, pygame.K_q):
+                            # Toggle Bass Only Mode (Sub-Bass & Kick Strobe)
+                            self.visualizer.toggle_bass_only()
+                        elif event.key in (pygame.K_2, pygame.K_w):
+                            # Toggle Mode 2.0 (Smart Sync)
+                            self.visualizer.toggle_mode_2_0()
+                        elif event.key in (pygame.K_3, pygame.K_r):
+                            # Toggle Red Only Strobe Mode
+                            self.visualizer.toggle_red_only()
+                        elif event.key in (pygame.K_4, pygame.K_o, pygame.K_z):
+                            # Toggle Static Solid Color Lighting Mode (Override music strobing with solid color)
+                            self.visualizer.toggle_solid_color()
                         elif event.key == pygame.K_n:
                             self.hud.toggle_sync_modal()
                         elif event.key in (pygame.K_f, pygame.K_F11) or (event.key == pygame.K_RETURN and (event.mod & pygame.KMOD_ALT)):
                             self.cycle_display_mode()
-                        elif event.key in (pygame.K_b, pygame.K_2):
+                        elif event.key == pygame.K_b:
                             self.visualizer.cycle_dual_scheme()
                         elif event.key in (pygame.K_h, pygame.K_TAB):
                             self.hud.toggle_hud()
                         elif event.key == pygame.K_m:
                             self.visualizer.cycle_mode()
                         elif event.key == pygame.K_p:
-                            self.visualizer.cycle_palette()
+                            if self.visualizer.is_solid_color_active():
+                                self.visualizer.cycle_solid_color()
+                            else:
+                                self.visualizer.cycle_palette()
                         elif event.key == pygame.K_v:
                             self.visualizer.cycle_style()
                         elif event.key == pygame.K_d:
@@ -231,7 +251,7 @@ class BeatStrobeApp:
 
                     elif event.type == pygame.MOUSEMOTION:
                         self.hud.handle_mouse_motion(
-                            event.pos, self.audio_mgr, self.visualizer, self.display_mgr
+                            event.pos, self.audio_mgr, self.visualizer, self.display_mgr, media_mgr=self.media_mgr
                         )
 
                 # 2. Audio & Sync State Processing
@@ -277,10 +297,52 @@ class BeatStrobeApp:
                     audio_state = self.client_audio_state
 
                 else:
+                    # Auto-detect Spotify isolated audio device if Spotify process is running
+                    if not getattr(self.audio_mgr, "user_selected_device", False) and (now - self.last_spotify_check >= 2.0):
+                        self.last_spotify_check = now
+                        if hasattr(self.audio_mgr, "auto_select_spotify"):
+                            self.audio_mgr.auto_select_spotify()
+
+                    tl_info = self.media_mgr.get_timeline() if self.media_mgr else {}
+                    tl_prog = tl_info.get("progress", 0.0)
+                    tl_dur = tl_info.get("duration", 0.0)
+                    tl_pos = tl_info.get("position", 0.0)
+                    tl_playing = tl_info.get("is_playing", False)
+                    if hasattr(self.audio_mgr, "set_timeline_context"):
+                        self.audio_mgr.set_timeline_context(tl_prog, tl_dur, tl_playing)
+
                     audio_state = self.audio_mgr.get_latest_state()
-                    audio_state["is_paused"] = getattr(self.media_mgr, "is_paused", False)
-                    audio_state["is_media_playing"] = getattr(self.media_mgr, "is_playing", False)
+
+                    # Only consider media paused if capturing from Spotify specifically or if audio is genuinely silent
+                    is_spotify_dev = False
+                    if hasattr(self.audio_mgr, "devices") and self.audio_mgr.devices:
+                        if self.audio_mgr.current_device_index < len(self.audio_mgr.devices):
+                            is_spotify_dev = (self.audio_mgr.devices[self.audio_mgr.current_device_index] == "spotify")
+
+                    has_live_audio = (
+                        audio_state.get("total_level", 0.0) > 0.015
+                        or audio_state.get("raw_peak", 0.0) > 0.002
+                        or audio_state.get("is_kick", False)
+                        or audio_state.get("is_snare", False)
+                        or audio_state.get("is_drop", False)
+                    )
+
+                    if has_live_audio:
+                        is_paused = False
+                    elif is_spotify_dev:
+                        is_paused = getattr(self.media_mgr, "is_paused", False)
+                    else:
+                        is_paused = False
+
+                    audio_state["is_paused"] = is_paused
+                    audio_state["is_media_playing"] = tl_playing
+                    audio_state["progress"] = tl_prog
+                    audio_state["duration"] = tl_dur
+                    audio_state["position"] = tl_pos
                     self.visualizer.update(dt, audio_state)
+                    # Feed audio energy into song waveform contour tracker
+                    if self.media_mgr and hasattr(self.media_mgr, "update_waveform_energy"):
+                        self.media_mgr.update_waveform_energy(audio_state.get("total_level", 0.0))
 
                 # Dynamically sync native album cover art palette (Host / Standalone)
                 if not is_client and self.media_mgr.update_count != self.last_media_update_count:
@@ -299,7 +361,9 @@ class BeatStrobeApp:
                 # Synchronize keyboard, mouse, room strips, and gaming PC RGB with explosive beat flashes and blackouts
                 col_left, col_right, is_strobe = self.visualizer.get_peripheral_colors()
                 self.razer_mgr.set_colors(col_left, col_right, strobe_cut=is_strobe)
-                self.happylighting_mgr.set_colors(col_left, strobe_cut=is_strobe)
+                self.happylighting_mgr.set_colors(
+                    col_left, col_right, strobe_cut=is_strobe, flash_id=self.visualizer.peripheral_flash_id
+                )
                 self.lenovo_mgr.set_colors(col_left, col_right, strobe_cut=is_strobe)
 
                 # 6. Broadcast to connected clients (Host only)

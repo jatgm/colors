@@ -16,14 +16,21 @@ The application includes multi-computer synchronization over Bluetooth and local
 
 ---
 
-## Sleek Compact UI & Automatic Music Detection
+## Cyber-Studio Dropdown UI & Automatic Music Detection
 
-Beat Strobe features a streamlined, low-profile Heads-Up Display (HUD) optimized for maximum on-screen visualizer real estate:
+Beat Strobe features a completely redesigned, cyber-studio Heads-Up Display (HUD) with interactive dropdown selectors:
+- **Interactive Dropdown Selectors**: Replaced flat cycling buttons with dedicated popover dropdown menus:
+  - **Mode Dropdown**: Interactive drop-up menu listing all 13 strobe modes with instant single-click selection and active checkmarks.
+  - **Palette Dropdown**: Lists all color palettes with live 4-color swatch preview chips drawn beside each palette name.
+  - **Audio Source Dropdown**: Direct selection of isolated Spotify audio, system loopback, and physical microphones.
+  - **Style Dropdown**: Instant selection between Solid Fullscreen, Radial Shockwave, and Horizon Pulse.
+  - **Dual FX Dropdown**: Quick selection of Dual Synced, Ping-Pong Alternating, Complementary Contrast, and Panoramic schemes.
+  - **Display Dropdown**: Direct windowed, single-monitor, and dual-monitor arrangement selection.
 - **Maximized Screen Real Estate**: Streamlined HUD height (~282px) giving full priority to high-impact screen strobe visuals while keeping all essential controls immediately accessible.
 - **Automatic Spotify Detection**: Automatically detects when Spotify is running and isolates pure Spotify audio output from noisy background applications (with seamless fallback to System Audio loopback).
 - **Default Album Cover Art Synchronization**: Launches directly in Album Cover Art mode, capturing live track artwork and extracting dominant 5-color palettes in real-time.
 - **Consolidated Horizontal Control Deck**: Sensitivity, Preamp Gain, and Decay Rate sliders consolidated side-by-side into a single 3-column row with real-time numeric readouts.
-- **Clean DAW / Synth Aesthetic**: Noisy telemetry strings replaced with clean typography, compact status badges (`SPOTIFY`, `RAZER`, `ROOM`, `LEGION`, `HOST`/`CLIENT`), and interactive color swatches.
+- **Modular Studio Surface**: Cleanly divided into master audio telemetry, 80px waveform scrub deck, precision mixers, dropdown selectors, ambient solid color lighting bar, and quick hardware toggle pods.
 
 ---
 

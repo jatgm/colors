@@ -24,7 +24,11 @@ from config import (
     PALETTE_ALBUM_ART,
     SOLID_COLORS,
     SOLID_COLOR_NAMES,
+    STROBE_MODES,
+    PALETTES,
+    PALETTE_NAMES,
 )
+from visualizer import DUAL_SCHEMES
 from sync_manager import (
     ROLE_STANDALONE,
     ROLE_HOST,
@@ -77,9 +81,16 @@ class HUD:
         self.btn_solid_toggle = None
         self.solid_name_rect = None
 
+        # Interactive Dropdown Selectors State
+        self.open_dropdown = None  # None or "mode", "palette", "device", "style", "dualfx", "display"
+        self.dropdown_items = []   # list of (screen_rect, val, label, is_active, extra)
+        self.dropdown_menu_rect = None
+        self.hover_dropdown_item_idx = -1
+
         self._build_layout()
 
     def resize(self, width, height, active_mon_rect=None):
+        self.open_dropdown = None
         self.width = max(100, width)
         self.height = max(100, height)
         if active_mon_rect:
@@ -99,11 +110,13 @@ class HUD:
             self.visible = True
 
     def toggle_hud(self):
+        self.open_dropdown = None
         self.manually_hidden = not self.manually_hidden
         self.visible = not self.manually_hidden
         self.last_interaction_time = time.time()
 
     def toggle_sync_modal(self):
+        self.open_dropdown = None
         self.show_sync_modal = not self.show_sync_modal
         self.notify_interaction()
 
@@ -155,7 +168,7 @@ class HUD:
         self.entering_custom_host = False
 
     def _build_layout(self):
-        """Build sleek, compact modern HUD layout with low vertical footprint."""
+        """Build sleek, redesigned modern cyber-studio HUD layout with dropdown selectors and modular pods."""
         mon = self.active_mon_rect
         panel_w = min(1040, mon.width - 32)
         panel_h = 282
@@ -164,37 +177,38 @@ class HUD:
 
         self.panel_rect = pygame.Rect(panel_x, panel_y, panel_w, panel_h)
 
+        pad_x = 18
+        avail_w = panel_w - 2 * pad_x
+
         # Top Right: Now Playing Native Album Cover Artwork Card
         card_w = min(220, max(180, (panel_w - 60) // 4))
-        card_h = 40
+        card_h = 36
         card_x = panel_x + panel_w - card_w - 18
-        card_y = panel_y + 28
+        card_y = panel_y + 8
         self.card_album_art = pygame.Rect(card_x, card_y, card_w, card_h)
 
         # Waveform Song Progress Bar Deck (height 80px for rich dynamic response)
         wf_x = panel_x + 18
-        wf_y = panel_y + 72
+        wf_y = panel_y + 46
         wf_w = panel_w - 36
         wf_h = 80
         self.waveform_rect = pygame.Rect(wf_x, wf_y, wf_w, wf_h)
 
         # Middle: 3 Sliders Side-by-Side in 1 sleek row
-        pad_x = 18
-        avail_w = panel_w - 2 * pad_x
         gap_sliders = 14
         col_w = (avail_w - 2 * gap_sliders) // 3
-        s_y = panel_y + 158
+        s_y = panel_y + 132
 
         # Slider 1: SENS
         lbl_w1 = 34
-        val_w1 = 50
+        val_w1 = 48
         bar_w1 = max(40, col_w - lbl_w1 - val_w1 - 8)
         self.slider_sens_rect = pygame.Rect(panel_x + pad_x + lbl_w1 + 4, s_y + 3, bar_w1, 10)
 
         # Slider 2: GAIN
         col2_x = panel_x + pad_x + col_w + gap_sliders
         lbl_w2 = 34
-        val_w2 = 50
+        val_w2 = 48
         bar_w2 = max(40, col_w - lbl_w2 - val_w2 - 8)
         self.slider_gain_rect = pygame.Rect(col2_x + lbl_w2 + 4, s_y + 3, bar_w2, 10)
 
@@ -205,13 +219,26 @@ class HUD:
         bar_w3 = max(40, col_w - lbl_w3 - val_w3 - 8)
         self.slider_decay_rect = pygame.Rect(col3_x + lbl_w3 + 4, s_y + 3, bar_w3, 10)
 
+        # Interactive Dropdown Selectors Bar (6 Dropdowns: Mode, Palette, Device, Style, DualFX, Displays)
+        drop_gap = 6
+        drop_w = (avail_w - 5 * drop_gap) // 6
+        drop_h = 28
+        drop_y = panel_y + 154
+
+        self.btn_mode = pygame.Rect(panel_x + pad_x, drop_y, drop_w, drop_h)
+        self.btn_palette = pygame.Rect(panel_x + pad_x + (drop_w + drop_gap), drop_y, drop_w, drop_h)
+        self.btn_device = pygame.Rect(panel_x + pad_x + (drop_w + drop_gap) * 2, drop_y, drop_w, drop_h)
+        self.btn_style = pygame.Rect(panel_x + pad_x + (drop_w + drop_gap) * 3, drop_y, drop_w, drop_h)
+        self.btn_dualfx = pygame.Rect(panel_x + pad_x + (drop_w + drop_gap) * 4, drop_y, drop_w, drop_h)
+        self.btn_displays = pygame.Rect(panel_x + pad_x + (drop_w + drop_gap) * 5, drop_y, drop_w, drop_h)
+
         # Solid Color Lighting Control Deck & Swatches Bar
-        solid_y = panel_y + 182
+        solid_y = panel_y + 188
         solid_h = 22
-        btn_solid_w = 100
+        btn_solid_w = 96
         self.btn_solid_toggle = pygame.Rect(panel_x + pad_x, solid_y, btn_solid_w, solid_h)
 
-        name_badge_w = 76
+        name_badge_w = 72
         swatches_avail_w = avail_w - btn_solid_w - name_badge_w - 18
         num_swatches = len(SOLID_COLORS)
         swatch_gap = 3
@@ -229,30 +256,20 @@ class HUD:
         badge_x = swatch_start_x + num_swatches * (swatch_w + swatch_gap) + 6
         self.solid_name_rect = pygame.Rect(badge_x, solid_y, name_badge_w, solid_h)
 
-        # Bottom Command Matrix: Balanced 2-Row Arrangement
+        # Quick Toggles & Hardware Pods (8 Buttons: 4 Engine Toggles + 4 Hardware Toggles)
         btn_h = 24
-        gap1 = 5
-        bw1 = (avail_w - 6 * gap1) // 7
-        by1 = panel_y + 210
-        self.btn_mode = pygame.Rect(panel_x + pad_x, by1, bw1, btn_h)
-        self.btn_mode_2_0 = pygame.Rect(panel_x + pad_x + (bw1 + gap1), by1, bw1, btn_h)
-        self.btn_palette = pygame.Rect(panel_x + pad_x + (bw1 + gap1) * 2, by1, bw1, btn_h)
-        self.btn_style = pygame.Rect(panel_x + pad_x + (bw1 + gap1) * 3, by1, bw1, btn_h)
-        self.btn_album_art = pygame.Rect(panel_x + pad_x + (bw1 + gap1) * 4, by1, bw1, btn_h)
-        self.btn_dualfx = pygame.Rect(panel_x + pad_x + (bw1 + gap1) * 5, by1, bw1, btn_h)
-        self.btn_displays = pygame.Rect(panel_x + pad_x + (bw1 + gap1) * 6, by1, bw1, btn_h)
+        gap_tog = 5
+        bw_tog = (avail_w - 7 * gap_tog) // 8
+        by_tog = panel_y + 216
 
-        # Row 2 (Engine, Hardware & Sync Controls - 7 buttons)
-        gap2 = 5
-        bw2 = (avail_w - 6 * gap2) // 7
-        by2 = by1 + 28
-        self.btn_device = pygame.Rect(panel_x + pad_x, by2, bw2, btn_h)
-        self.btn_sync = pygame.Rect(panel_x + pad_x + (bw2 + gap2), by2, bw2, btn_h)
-        self.btn_overdrive = pygame.Rect(panel_x + pad_x + (bw2 + gap2) * 2, by2, bw2, btn_h)
-        self.btn_safe = pygame.Rect(panel_x + pad_x + (bw2 + gap2) * 3, by2, bw2, btn_h)
-        self.btn_razer = pygame.Rect(panel_x + pad_x + (bw2 + gap2) * 4, by2, bw2, btn_h)
-        self.btn_room_lights = pygame.Rect(panel_x + pad_x + (bw2 + gap2) * 5, by2, bw2, btn_h)
-        self.btn_lenovo = pygame.Rect(panel_x + pad_x + (bw2 + gap2) * 6, by2, bw2, btn_h)
+        self.btn_overdrive = pygame.Rect(panel_x + pad_x, by_tog, bw_tog, btn_h)
+        self.btn_mode_2_0 = pygame.Rect(panel_x + pad_x + (bw_tog + gap_tog), by_tog, bw_tog, btn_h)
+        self.btn_album_art = pygame.Rect(panel_x + pad_x + (bw_tog + gap_tog) * 2, by_tog, bw_tog, btn_h)
+        self.btn_safe = pygame.Rect(panel_x + pad_x + (bw_tog + gap_tog) * 3, by_tog, bw_tog, btn_h)
+        self.btn_razer = pygame.Rect(panel_x + pad_x + (bw_tog + gap_tog) * 4, by_tog, bw_tog, btn_h)
+        self.btn_room_lights = pygame.Rect(panel_x + pad_x + (bw_tog + gap_tog) * 5, by_tog, bw_tog, btn_h)
+        self.btn_lenovo = pygame.Rect(panel_x + pad_x + (bw_tog + gap_tog) * 6, by_tog, bw_tog, btn_h)
+        self.btn_sync = pygame.Rect(panel_x + pad_x + (bw_tog + gap_tog) * 7, by_tog, bw_tog, btn_h)
 
     def _get_warning_dialog_layout(self):
         """Unified hitbox and layout geometry for the photosensitivity safety modal."""
@@ -374,7 +391,69 @@ class HUD:
         if not self.visible or self.alpha < 30:
             return False
 
-        # Waveform Progress Bar Deck Interactive Seeking
+        # -----------------------------------------------------------------
+        # 0. Active Dropdown Popover Menu Interaction
+        # -----------------------------------------------------------------
+        if self.open_dropdown is not None:
+            # 1. Check if user clicked an item inside the open dropdown menu
+            for item_rect, item_val, item_label, is_act, extra in self.dropdown_items:
+                if item_rect.collidepoint(pos):
+                    if self.open_dropdown == "mode" and visualizer:
+                        visualizer.set_mode(item_val)
+                    elif self.open_dropdown == "palette" and visualizer:
+                        visualizer.set_palette(item_val)
+                    elif self.open_dropdown == "device" and audio_mgr:
+                        audio_mgr.select_device(item_val, manual=True)
+                    elif self.open_dropdown == "style" and visualizer:
+                        if hasattr(visualizer, "set_style"):
+                            visualizer.set_style(item_val)
+                        else:
+                            visualizer.current_style = item_val
+                    elif self.open_dropdown == "dualfx" and visualizer:
+                        if hasattr(visualizer, "set_dual_scheme"):
+                            visualizer.set_dual_scheme(item_val)
+                        else:
+                            visualizer.dual_scheme = item_val
+                    elif self.open_dropdown == "display" and display_mgr:
+                        if hasattr(display_mgr, "set_display_mode"):
+                            display_mgr.set_display_mode(item_val)
+                        else:
+                            display_mgr.current_mode = item_val
+                        if on_display_change:
+                            on_display_change()
+
+                    self.open_dropdown = None
+                    return True
+
+            # 2. Check if click is inside the dropdown menu panel
+            if self.dropdown_menu_rect and self.dropdown_menu_rect.collidepoint(pos):
+                return True
+
+            # 3. Check if user clicked the toggle button of the current open dropdown to close it
+            clicked_same_btn = False
+            if self.open_dropdown == "mode" and self.btn_mode.collidepoint(pos):
+                clicked_same_btn = True
+            elif self.open_dropdown == "palette" and self.btn_palette.collidepoint(pos):
+                clicked_same_btn = True
+            elif self.open_dropdown == "device" and self.btn_device.collidepoint(pos):
+                clicked_same_btn = True
+            elif self.open_dropdown == "style" and self.btn_style.collidepoint(pos):
+                clicked_same_btn = True
+            elif self.open_dropdown == "dualfx" and self.btn_dualfx.collidepoint(pos):
+                clicked_same_btn = True
+            elif self.open_dropdown == "display" and self.btn_displays.collidepoint(pos):
+                clicked_same_btn = True
+
+            if clicked_same_btn:
+                self.open_dropdown = None
+                return True
+
+            # 4. Otherwise, clicking outside closes the dropdown
+            self.open_dropdown = None
+
+        # -----------------------------------------------------------------
+        # 1. Waveform Progress Bar Deck Interactive Seeking
+        # -----------------------------------------------------------------
         if hasattr(self, "waveform_rect") and self.waveform_rect.collidepoint(pos):
             time_deck_w = 148
             inner_w = max(10, self.waveform_rect.width - time_deck_w - 20)
@@ -388,7 +467,9 @@ class HUD:
                     media_mgr.seek(prog)
             return True
 
-        # Sliders
+        # -----------------------------------------------------------------
+        # 2. Precision Mixer Sliders Deck
+        # -----------------------------------------------------------------
         if self.slider_sens_rect.inflate(10, 10).collidepoint(pos):
             self.dragging_slider = "sens"
             self._update_slider_pos(pos[0], self.slider_sens_rect, MIN_SENSITIVITY, MAX_SENSITIVITY, audio_mgr.set_sensitivity)
@@ -402,64 +483,77 @@ class HUD:
             self._update_slider_pos(pos[0], self.slider_decay_rect, MIN_DECAY_RATE, MAX_DECAY_RATE, visualizer.set_decay_rate)
             return True
 
-        # Solid Lighting Controls
+        # -----------------------------------------------------------------
+        # 3. Interactive Dropdown Selectors Triggers
+        # -----------------------------------------------------------------
+        if self.btn_mode.collidepoint(pos):
+            self.open_dropdown = "mode" if self.open_dropdown != "mode" else None
+            return True
+        elif self.btn_palette.collidepoint(pos):
+            self.open_dropdown = "palette" if self.open_dropdown != "palette" else None
+            return True
+        elif self.btn_device.collidepoint(pos):
+            self.open_dropdown = "device" if self.open_dropdown != "device" else None
+            return True
+        elif self.btn_style.collidepoint(pos):
+            self.open_dropdown = "style" if self.open_dropdown != "style" else None
+            return True
+        elif self.btn_dualfx.collidepoint(pos):
+            self.open_dropdown = "dualfx" if self.open_dropdown != "dualfx" else None
+            return True
+        elif self.btn_displays.collidepoint(pos):
+            self.open_dropdown = "display" if self.open_dropdown != "display" else None
+            return True
+
+        # -----------------------------------------------------------------
+        # 4. Ambient Solid Lighting Controls & Swatches
+        # -----------------------------------------------------------------
         if hasattr(self, "btn_solid_toggle") and self.btn_solid_toggle and self.btn_solid_toggle.collidepoint(pos):
-            visualizer.toggle_solid_color()
+            if visualizer:
+                visualizer.toggle_solid_color()
             return True
 
         if hasattr(self, "solid_swatch_rects"):
             for s_rect, idx, s_name, s_rgb in self.solid_swatch_rects:
                 if s_rect.collidepoint(pos):
-                    visualizer.set_solid_color(idx, activate=True)
+                    if visualizer:
+                        visualizer.set_solid_color(idx, activate=True)
                     return True
 
         if hasattr(self, "solid_name_rect") and self.solid_name_rect and self.solid_name_rect.collidepoint(pos):
-            visualizer.cycle_solid_color()
+            if visualizer:
+                visualizer.cycle_solid_color()
             return True
 
-        # Action Buttons
-        if self.btn_mode.collidepoint(pos):
-            visualizer.cycle_mode()
-            return True
-        elif hasattr(self, "btn_mode_2_0") and self.btn_mode_2_0.collidepoint(pos):
-            visualizer.toggle_mode_2_0()
-            return True
-        elif self.btn_palette.collidepoint(pos):
-            visualizer.cycle_palette()
+        # -----------------------------------------------------------------
+        # 5. Quick Toggles & Hardware Pods
+        # -----------------------------------------------------------------
+        if hasattr(self, "btn_mode_2_0") and self.btn_mode_2_0.collidepoint(pos):
+            if visualizer:
+                visualizer.toggle_mode_2_0()
             return True
         elif hasattr(self, "btn_album_art") and self.btn_album_art.collidepoint(pos):
-            visualizer.toggle_album_art_mode()
+            if visualizer:
+                visualizer.toggle_album_art_mode()
             return True
         elif hasattr(self, "card_album_art") and self.card_album_art.collidepoint(pos):
-            visualizer.toggle_album_art_mode()
-            return True
-        elif self.btn_style.collidepoint(pos):
-            visualizer.cycle_style()
-            return True
-        elif self.btn_dualfx.collidepoint(pos):
-            visualizer.cycle_dual_scheme()
-            return True
-        elif self.btn_displays.collidepoint(pos):
-            if display_mgr:
-                display_mgr.cycle_display_mode()
-            on_display_change()
-            return True
-        elif self.btn_device.collidepoint(pos):
-            if audio_mgr:
-                audio_mgr.cycle_device()
-            return True
-        elif self.btn_sync.collidepoint(pos):
-            self.toggle_sync_modal()
+            if visualizer:
+                visualizer.toggle_album_art_mode()
             return True
         elif self.btn_overdrive.collidepoint(pos):
-            visualizer.toggle_overdrive()
-            if audio_mgr:
+            if visualizer:
+                visualizer.toggle_overdrive()
+            if audio_mgr and visualizer:
                 audio_mgr.set_overdrive(visualizer.overdrive_mode)
             return True
         elif self.btn_safe.collidepoint(pos):
-            visualizer.toggle_safe_mode()
-            if audio_mgr:
+            if visualizer:
+                visualizer.toggle_safe_mode()
+            if audio_mgr and visualizer:
                 audio_mgr.set_overdrive(visualizer.overdrive_mode)
+            return True
+        elif self.btn_sync.collidepoint(pos):
+            self.toggle_sync_modal()
             return True
         elif self.btn_razer.collidepoint(pos):
             if razer_mgr is not None:
@@ -488,6 +582,14 @@ class HUD:
                 self.set_active_monitor(mon.rect)
 
         self.notify_interaction()
+
+        if self.open_dropdown is not None:
+            self.hover_dropdown_item_idx = -1
+            for idx, (item_rect, _, _, _, _) in enumerate(self.dropdown_items):
+                if item_rect.collidepoint(pos):
+                    self.hover_dropdown_item_idx = idx
+                    break
+
         if self.dragging_slider == "sens":
             self._update_slider_pos(pos[0], self.slider_sens_rect, MIN_SENSITIVITY, MAX_SENSITIVITY, audio_mgr.set_sensitivity)
         elif self.dragging_slider == "gain":
@@ -1015,101 +1117,79 @@ class HUD:
             hud_surf.blit(tag_text, (tag_rect.x + (tag_rect.width - tag_text.get_width()) // 2, tag_rect.y + 4))
 
         # Section Accent Line
-        sep_y = panel.y + 206
+        sep_y = panel.y + 208
         pygame.draw.line(hud_surf, (*accent_col, min(45, alpha_int)), (panel.x + 18, sep_y), (panel.right - 18, sep_y))
 
-        # 5. Command Matrix: 2-Row Arrangement
-        # --- Row 1: Visual, Display, 2.0 & Album Controls (7 buttons) ---
-        m_txt = visualizer.mode
-        if m_txt.startswith("[") and "]" in m_txt:
-            m_txt = m_txt.split("]", 1)[1].strip()
-        if "Strobe 2.0" in m_txt:
-            m_disp = "Mode: 2.0"
-        elif "Psycho" in m_txt:
-            m_disp = "Mode: Psycho"
-        elif "Red Only" in m_txt:
-            m_disp = "Mode: Red"
-        elif "Bass Only" in m_txt:
-            m_disp = "Mode: Bass"
-        elif "Cover Art" in m_txt:
-            m_disp = "Mode: Album"
-        elif "Machine-Gun" in m_txt:
-            m_disp = "Mode: Burst"
-        elif "Strobe Blitz" in m_txt:
-            m_disp = "Mode: Blitz"
-        else:
-            m_disp = f"Mode: {m_txt[:8]}"
+        # 5. Interactive Dropdown Selectors Bar
+        # 5.1 Mode Selector Dropdown
+        m_label = visualizer.mode if visualizer else "Mode"
+        self._render_dropdown_selector(
+            hud_surf, self.btn_mode, "MODE", m_label, (self.open_dropdown == "mode"), alpha_int, (0, 240, 255)
+        )
 
-        is_red = (visualizer.mode == MODE_RED_ONLY)
-        btn_mode_bg = (42, 14, 18) if is_red else (18, 24, 38)
-        btn_mode_border = (255, 30, 45) if is_red else (0, 200, 255)
-        self._render_button(hud_surf, self.btn_mode, m_disp, btn_mode_bg, btn_mode_border, alpha_int,
-                            has_pip=is_red, pip_active=is_red, pip_col=(255, 30, 45))
+        # 5.2 Palette Selector Dropdown
+        p_label = visualizer.palette_name if visualizer else "Palette"
+        self._render_dropdown_selector(
+            hud_surf, self.btn_palette, "PALETTE", p_label, (self.open_dropdown == "palette"), alpha_int, (255, 60, 180)
+        )
 
-        mode_2_0_active = visualizer.is_mode_2_0_active()
-        mode_2_0_bg = (48, 14, 38) if mode_2_0_active else (18, 24, 38)
-        mode_2_0_border = (255, 40, 180) if mode_2_0_active else (85, 55, 105)
-        self._render_button(hud_surf, self.btn_mode_2_0, "Strobe 2.0",
-                            mode_2_0_bg, mode_2_0_border, alpha_int, has_pip=True, pip_active=mode_2_0_active, pip_col=(255, 40, 180))
-
-        p_txt = visualizer.palette_name
-        if p_txt.startswith("[") and "]" in p_txt:
-            p_txt = p_txt.split("]", 1)[1].strip()
-        self._render_button(hud_surf, self.btn_palette, f"Pal: {p_txt[:8]}", (26, 20, 36), (240, 40, 180), alpha_int)
-
-        s_clean = visualizer.current_style.replace("Solid ", "").replace("Shockwave", "Wave")
-        self._render_button(hud_surf, self.btn_style, f"Style: {s_clean[:7]}", (22, 22, 40), (160, 110, 255), alpha_int)
-
-        art_active = (visualizer.mode == MODE_ALBUM_ART or visualizer.palette_name == PALETTE_ALBUM_ART)
-        art_bg = (10, 45, 60) if art_active else (18, 24, 38)
-        art_border = (0, 240, 255) if art_active else (60, 80, 105)
-        self._render_button(hud_surf, self.btn_album_art, "Album Sync",
-                            art_bg, art_border, alpha_int, has_pip=True, pip_active=art_active, pip_col=(0, 240, 255))
-
-        dual_txt = visualizer.dual_scheme.replace("Dual ", "").replace("Alternating", "Alt").replace("Complementary ", "") if is_dual else "Single"
-        self._render_button(hud_surf, self.btn_dualfx, f"Dual: {dual_txt[:7]}", (30, 24, 45), (200, 110, 255), alpha_int)
-
-        disp_txt = getattr(display_mgr, "current_mode", "Windowed") if display_mgr else "Win"
-        disp_txt = disp_txt.replace("Dual Monitor ", "").replace("Monitor ", "Mon ")
-        self._render_button(hud_surf, self.btn_displays, f"Disp: {disp_txt[:7]}", (22, 30, 48), (100, 190, 255), alpha_int)
-
-        # --- Row 2: Engine, Hardware & Sync Controls (7 buttons) ---
+        # 5.3 Audio Source Selector Dropdown
         is_spotify_active = (audio_mgr and getattr(audio_mgr, "devices", None) and
                              len(audio_mgr.devices) > audio_mgr.current_device_index and
                              audio_mgr.devices[audio_mgr.current_device_index] == "spotify")
-        dev_btn_txt = "Spotify" if is_spotify_active else "Audio In"
-        dev_btn_bg = (12, 38, 28) if is_spotify_active else (18, 28, 40)
-        dev_btn_border = (0, 240, 160) if is_spotify_active else (80, 220, 190)
-        self._render_button(hud_surf, self.btn_device, dev_btn_txt, dev_btn_bg, dev_btn_border, alpha_int,
-                            has_pip=is_spotify_active, pip_active=is_spotify_active, pip_col=(0, 240, 160))
+        dev_label = "Spotify (ISO)" if is_spotify_active else (audio_mgr.current_device_name if audio_mgr else "Audio In")
+        self._render_dropdown_selector(
+            hud_surf, self.btn_device, "AUDIO IN", dev_label, (self.open_dropdown == "device"), alpha_int, (0, 255, 140)
+        )
 
-        if sync_mgr and sync_mgr.role == ROLE_HOST:
-            sync_label = f"Sync: Host"
-            sync_bg = (40, 20, 50)
-            sync_border = (230, 90, 255)
-        elif sync_mgr and sync_mgr.role == ROLE_CLIENT:
-            c_tag = "Link" if sync_mgr.client_sock else "Scan"
-            sync_label = f"Sync: {c_tag}"
-            sync_bg = (15, 38, 52)
-            sync_border = (0, 220, 255)
-        else:
-            sync_label = "Sync: BT/LAN"
-            sync_bg = (18, 24, 38)
-            sync_border = (90, 140, 190)
-        self._render_button(hud_surf, self.btn_sync, sync_label, sync_bg, sync_border, alpha_int)
+        # 5.4 Visual Style Selector Dropdown
+        s_label = visualizer.current_style if visualizer else "Style"
+        self._render_dropdown_selector(
+            hud_surf, self.btn_style, "STYLE", s_label, (self.open_dropdown == "style"), alpha_int, (180, 100, 255)
+        )
 
-        ovr_active = visualizer.overdrive_mode
+        # 5.5 Dual Monitor FX Dropdown
+        dual_label = visualizer.dual_scheme if (visualizer and is_dual) else "Single Mon"
+        self._render_dropdown_selector(
+            hud_surf, self.btn_dualfx, "DUAL FX", dual_label, (self.open_dropdown == "dualfx"), alpha_int, (220, 120, 255)
+        )
+
+        # 5.6 Display Arrangement Dropdown
+        disp_label = display_mgr.current_mode if display_mgr else "Display"
+        self._render_dropdown_selector(
+            hud_surf, self.btn_displays, "DISPLAY", disp_label, (self.open_dropdown == "display"), alpha_int, (100, 200, 255)
+        )
+
+        # 6. Quick Engine & Hardware Toggles Pod (8 Buttons)
+        # 6.1 Crazy Overdrive Toggle
+        ovr_active = visualizer.overdrive_mode if visualizer else False
         ovr_bg = (70, 18, 22) if ovr_active else (24, 18, 24)
         ovr_border = (255, 60, 45) if ovr_active else (110, 50, 50)
         self._render_button(hud_surf, self.btn_overdrive, "Overdrive",
                             ovr_bg, ovr_border, alpha_int, has_pip=True, pip_active=ovr_active, pip_col=(255, 60, 45))
 
-        safe_active = visualizer.safe_mode
+        # 6.2 Strobe 2.0 Smart Sync Toggle
+        mode_2_0_active = visualizer.is_mode_2_0_active() if visualizer else False
+        mode_2_0_bg = (48, 14, 38) if mode_2_0_active else (18, 24, 38)
+        mode_2_0_border = (255, 40, 180) if mode_2_0_active else (85, 55, 105)
+        self._render_button(hud_surf, self.btn_mode_2_0, "Strobe 2.0",
+                            mode_2_0_bg, mode_2_0_border, alpha_int, has_pip=True, pip_active=mode_2_0_active, pip_col=(255, 40, 180))
+
+        # 6.3 Album Cover Art Sync Toggle
+        art_active = visualizer.is_album_art_active() if visualizer else False
+        art_bg = (10, 45, 60) if art_active else (18, 24, 38)
+        art_border = (0, 240, 255) if art_active else (60, 80, 105)
+        self._render_button(hud_surf, self.btn_album_art, "Album Sync",
+                            art_bg, art_border, alpha_int, has_pip=True, pip_active=art_active, pip_col=(0, 240, 255))
+
+        # 6.4 Safe Glow Mode Toggle
+        safe_active = visualizer.safe_mode if visualizer else False
         safe_bg = (15, 48, 30) if safe_active else (18, 24, 34)
         safe_border = (0, 240, 150) if safe_active else (60, 90, 80)
         self._render_button(hud_surf, self.btn_safe, "Safe Glow",
                             safe_bg, safe_border, alpha_int, has_pip=True, pip_active=safe_active, pip_col=(0, 240, 150))
 
+        # 6.5 Razer Chroma Peripheral Lighting
         if razer_mgr and razer_mgr.device_count > 0:
             rz_active = razer_mgr.enabled
             rz_label = f"Razer ({razer_mgr.device_count})"
@@ -1122,6 +1202,7 @@ class HUD:
             rz_border = (50, 60, 75)
         self._render_button(hud_surf, self.btn_razer, rz_label, rz_bg, rz_border, alpha_int, has_pip=True, pip_active=rz_active, pip_col=(0, 255, 120))
 
+        # 6.6 HappyLighting BLE Room Light Strips
         if happylighting_mgr:
             if happylighting_mgr.connected:
                 hl_active = happylighting_mgr.enabled
@@ -1149,6 +1230,7 @@ class HUD:
             hl_pip = None
         self._render_button(hud_surf, self.btn_room_lights, hl_label, hl_bg, hl_border, alpha_int, has_pip=True, pip_active=hl_active, pip_col=hl_pip)
 
+        # 6.7 Lenovo Legion Gaming Desktop PC RGB
         if lenovo_mgr and lenovo_mgr.connected:
             legion_active = lenovo_mgr.enabled
             legion_label = "Legion PC"
@@ -1161,13 +1243,239 @@ class HUD:
             legion_border = (50, 60, 75)
         self._render_button(hud_surf, self.btn_lenovo, legion_label, legion_bg, legion_border, alpha_int, has_pip=True, pip_active=legion_active, pip_col=(0, 190, 255))
 
-        # 5. Minimal Clean Footer
-        hints = "ESC Exit   O Solid   R Red   1 Bass   2 Smart   X Overdrive   A Album   C Razer   L Room   K Legion   M Mode   P Palette   TAB Hide"
+        # 6.8 Multi-Computer Network / BT Mesh Sync
+        if sync_mgr and sync_mgr.role == ROLE_HOST:
+            sync_label = "Sync: Host"
+            sync_bg = (40, 20, 50)
+            sync_border = (230, 90, 255)
+        elif sync_mgr and sync_mgr.role == ROLE_CLIENT:
+            c_tag = "Link" if sync_mgr.client_sock else "Scan"
+            sync_label = f"Sync: {c_tag}"
+            sync_bg = (15, 38, 52)
+            sync_border = (0, 220, 255)
+        else:
+            sync_label = "Sync: BT/LAN"
+            sync_bg = (18, 24, 38)
+            sync_border = (90, 140, 190)
+        self._render_button(hud_surf, self.btn_sync, sync_label, sync_bg, sync_border, alpha_int)
+
+        # 7. Minimal Clean Footer Navigation Strip
+        hints = "ESC Close Menu/Exit   1 Bass   2 Smart   X Overdrive   A Album   O Solid   P Palette   TAB Hide HUD"
         hint_surf = self.font_tiny.render(hints, True, (120, 138, 165))
         hud_surf.blit(hint_surf, (panel.x + (panel.width - hint_surf.get_width()) // 2, panel.bottom - 16))
 
         hud_surf.set_alpha(alpha_int)
         screen.blit(hud_surf, (0, 0))
+
+        # 8. Render Floating Dropdown Popover Menu (on top of everything)
+        if self.open_dropdown is not None:
+            self._render_dropdown_menu(screen, audio_mgr, visualizer, display_mgr)
+
+    def _render_dropdown_selector(self, surf, rect, category_label, value_str, is_open, alpha, accent_col):
+        """Render modern cyber-studio dropdown selector button with category label, value, and vector chevron."""
+        bg_col = (20, 36, 52) if is_open else (14, 18, 28)
+        border_col = accent_col if is_open else (48, 68, 92)
+
+        pygame.draw.rect(surf, (*bg_col, alpha), rect, border_radius=4)
+        pygame.draw.rect(surf, (*border_col, alpha), rect, width=1, border_radius=4)
+
+        if is_open:
+            self._draw_tech_corner_brackets(surf, rect, (*accent_col, alpha), bracket_len=5, width=1)
+
+        cat_surf = self.font_tiny.render(category_label, True, (130, 155, 185))
+        surf.blit(cat_surf, (rect.x + 6, rect.y + 2))
+
+        avail_w = max(10, rect.width - 20)
+        clean_val = str(value_str)
+        if clean_val.startswith("[") and "]" in clean_val and not clean_val.startswith("[App:"):
+            clean_val = clean_val.split("]", 1)[1].strip()
+
+        if self.font_small.size(clean_val)[0] > avail_w:
+            while len(clean_val) > 3 and self.font_small.size(clean_val + "..")[0] > avail_w:
+                clean_val = clean_val[:-1]
+            clean_val = clean_val + ".."
+
+        val_col = (255, 255, 255) if is_open else (230, 240, 255)
+        v_surf = self.font_small.render(clean_val, True, val_col)
+        surf.blit(v_surf, (rect.x + 6, rect.y + 13))
+
+        ch_x = rect.right - 9
+        ch_y = rect.y + rect.height // 2 + 3
+        ch_col = accent_col if is_open else (120, 145, 175)
+        if is_open:
+            pygame.draw.polygon(surf, (*ch_col, alpha), [(ch_x - 4, ch_y + 2), (ch_x + 4, ch_y + 2), (ch_x, ch_y - 3)])
+        else:
+            pygame.draw.polygon(surf, (*ch_col, alpha), [(ch_x - 4, ch_y - 2), (ch_x + 4, ch_y - 2), (ch_x, ch_y + 3)])
+
+    def _render_dropdown_menu(self, screen, audio_mgr, visualizer, display_mgr):
+        """Render floating drop-up popover menu with interactive items, swatches, and active checkmarks."""
+        if not self.open_dropdown:
+            return
+
+        hover_pos = self.mouse_hover_pos
+        self.dropdown_items = []
+
+        if self.open_dropdown == "mode":
+            menu_title = "// SELECT STROBE MODE"
+            accent_col = (0, 240, 255)
+            target_btn = self.btn_mode
+            cur_val = visualizer.mode if visualizer else ""
+            raw_items = [(m, m, (m == cur_val), None) for m in STROBE_MODES]
+
+        elif self.open_dropdown == "palette":
+            menu_title = "// SELECT COLOR PALETTE"
+            accent_col = (255, 60, 180)
+            target_btn = self.btn_palette
+            cur_val = visualizer.palette_name if visualizer else ""
+            raw_items = []
+            for p_name in PALETTE_NAMES:
+                swatches = PALETTES.get(p_name, [])[:4]
+                raw_items.append((p_name, p_name, (p_name == cur_val), swatches))
+
+        elif self.open_dropdown == "device":
+            menu_title = "// SELECT AUDIO SOURCE"
+            accent_col = (0, 255, 140)
+            target_btn = self.btn_device
+            cur_idx = audio_mgr.current_device_index if audio_mgr else 0
+            dev_names = audio_mgr.device_names if audio_mgr else ["Default Output"]
+            raw_items = []
+            for i, d_name in enumerate(dev_names):
+                raw_items.append((i, d_name, (i == cur_idx), None))
+
+        elif self.open_dropdown == "style":
+            menu_title = "// SELECT VISUAL STYLE"
+            accent_col = (180, 100, 255)
+            target_btn = self.btn_style
+            cur_style = visualizer.current_style if visualizer else "Solid Fullscreen"
+            styles = visualizer.visual_styles if visualizer else ["Solid Fullscreen", "Radial Shockwave", "Horizon Pulse"]
+            raw_items = [(i, s, (s == cur_style), None) for i, s in enumerate(styles)]
+
+        elif self.open_dropdown == "dualfx":
+            menu_title = "// SELECT DUAL MONITOR SCHEME"
+            accent_col = (220, 120, 255)
+            target_btn = self.btn_dualfx
+            cur_scheme = visualizer.dual_scheme if visualizer else "Dual Synced"
+            raw_items = [(i, sch, (sch == cur_scheme), None) for i, sch in enumerate(DUAL_SCHEMES)]
+
+        elif self.open_dropdown == "display":
+            menu_title = "// SELECT DISPLAY ARRANGEMENT"
+            accent_col = (100, 200, 255)
+            target_btn = self.btn_displays
+            cur_mode = display_mgr.current_mode if display_mgr else "Windowed"
+            modes = display_mgr.available_modes if display_mgr else ["Windowed"]
+            raw_items = [(i, md, (md == cur_mode), None) for i, md in enumerate(modes)]
+
+        else:
+            return
+
+        num_items = len(raw_items)
+        use_two_cols = (num_items > 6)
+
+        if use_two_cols:
+            col_w = 176
+            menu_w = col_w * 2 + 16
+            num_rows = (num_items + 1) // 2
+            item_h = 24
+            menu_h = 30 + num_rows * item_h + 8
+        else:
+            col_w = max(210, target_btn.width + 20)
+            menu_w = col_w + 16
+            item_h = 24
+            menu_h = 30 + num_items * item_h + 8
+
+        menu_x = max(self.panel_rect.x + 8, min(self.panel_rect.right - menu_w - 8, target_btn.centerx - menu_w // 2))
+        menu_y = max(10, target_btn.y - menu_h - 4)
+        self.dropdown_menu_rect = pygame.Rect(menu_x, menu_y, menu_w, menu_h)
+
+        drop_surf = pygame.Surface((menu_w, menu_h), pygame.SRCALPHA)
+        drop_surf.fill((10, 15, 26, 252))
+
+        pygame.draw.rect(drop_surf, (*accent_col, 220), pygame.Rect(0, 0, menu_w, menu_h), width=1, border_radius=6)
+        self._draw_tech_corner_brackets(drop_surf, pygame.Rect(0, 0, menu_w, menu_h), (*accent_col, 255), bracket_len=8, width=2)
+
+        header_rect = pygame.Rect(1, 1, menu_w - 2, 24)
+        pygame.draw.rect(drop_surf, (16, 24, 38, 250), header_rect, border_top_left_radius=5, border_top_right_radius=5)
+        pygame.draw.line(drop_surf, (*accent_col, 100), (4, 25), (menu_w - 4, 25))
+
+        h_title_surf = self.font_tiny.render(menu_title, True, accent_col)
+        drop_surf.blit(h_title_surf, (10, 6))
+
+        close_hint = self.font_tiny.render("[ESC]", True, (110, 130, 155))
+        drop_surf.blit(close_hint, (menu_w - close_hint.get_width() - 8, 6))
+
+        for idx, (item_val, item_label, is_act, swatches) in enumerate(raw_items):
+            if use_two_cols:
+                col = idx % 2
+                row = idx // 2
+                ix = 8 + col * col_w
+                iy = 28 + row * item_h
+                iw = col_w - 4
+            else:
+                ix = 8
+                iy = 28 + idx * item_h
+                iw = col_w
+
+            item_rect_local = pygame.Rect(ix, iy, iw, item_h - 2)
+            item_rect_screen = pygame.Rect(menu_x + ix, menu_y + iy, iw, item_h - 2)
+
+            is_hov = bool(hover_pos and item_rect_screen.collidepoint(hover_pos))
+            self.dropdown_items.append((item_rect_screen, item_val, item_label, is_act, swatches))
+
+            if is_act:
+                bg_col = (18, 48, 68, 255)
+                bdr_col = (*accent_col, 180)
+            elif is_hov:
+                bg_col = (28, 38, 54, 255)
+                bdr_col = (75, 110, 150, 160)
+            else:
+                bg_col = (14, 18, 30, 200)
+                bdr_col = (30, 42, 60, 100)
+
+            pygame.draw.rect(drop_surf, bg_col, item_rect_local, border_radius=3)
+            pygame.draw.rect(drop_surf, bdr_col, item_rect_local, width=1, border_radius=3)
+
+            pip_x = ix + 8
+            pip_y = iy + (item_h - 2) // 2
+            if is_act:
+                pygame.draw.circle(drop_surf, (*accent_col, 255), (pip_x, pip_y), 3)
+                pygame.draw.circle(drop_surf, (255, 255, 255, 255), (pip_x, pip_y), 1)
+            elif is_hov:
+                pygame.draw.circle(drop_surf, (150, 200, 255, 255), (pip_x, pip_y), 2)
+            else:
+                pygame.draw.circle(drop_surf, (45, 60, 80, 255), (pip_x, pip_y), 2)
+
+            swatch_reserve_w = 0
+            if swatches:
+                swatch_reserve_w = len(swatches) * 9 + 6
+                sw_x = ix + iw - swatch_reserve_w
+                sw_y = iy + 5
+                for s_col in swatches:
+                    pygame.draw.rect(drop_surf, (*s_col, 255), (sw_x, sw_y, 7, item_h - 12), border_radius=1)
+                    sw_x += 9
+
+            text_x = ix + 16
+            avail_tw = max(10, iw - 20 - swatch_reserve_w)
+
+            clean_lbl = str(item_label)
+            if clean_lbl.startswith("[") and "]" in clean_lbl and not clean_lbl.startswith("[App:"):
+                clean_lbl = clean_lbl.split("]", 1)[1].strip()
+
+            if self.font_small.size(clean_lbl)[0] > avail_tw:
+                while len(clean_lbl) > 3 and self.font_small.size(clean_lbl + "..")[0] > avail_tw:
+                    clean_lbl = clean_lbl[:-1]
+                clean_lbl = clean_lbl + ".."
+
+            if is_act:
+                txt_col = (255, 255, 255)
+            elif is_hov:
+                txt_col = (220, 240, 255)
+            else:
+                txt_col = (165, 185, 210)
+
+            t_surf = self.font_small.render(clean_lbl, True, txt_col)
+            drop_surf.blit(t_surf, (text_x, iy + 3))
+
+        screen.blit(drop_surf, (menu_x, menu_y))
 
     def _render_segmented_vu(self, surf, x, y, w, h, level, active_col, alpha):
         """Render high-tech segmented VU meter bars."""

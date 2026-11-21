@@ -330,8 +330,24 @@ class VisualizerEngine:
         self.current_style = self.visual_styles[self.style_index]
         return self.current_style
 
+    def set_style(self, style_or_idx):
+        if isinstance(style_or_idx, int):
+            self.style_index = style_or_idx % len(self.visual_styles)
+        elif style_or_idx in self.visual_styles:
+            self.style_index = self.visual_styles.index(style_or_idx)
+        self.current_style = self.visual_styles[self.style_index]
+        return self.current_style
+
     def cycle_dual_scheme(self):
         self.dual_scheme_index = (self.dual_scheme_index + 1) % len(DUAL_SCHEMES)
+        self.dual_scheme = DUAL_SCHEMES[self.dual_scheme_index]
+        return self.dual_scheme
+
+    def set_dual_scheme(self, scheme_or_idx):
+        if isinstance(scheme_or_idx, int):
+            self.dual_scheme_index = scheme_or_idx % len(DUAL_SCHEMES)
+        elif scheme_or_idx in DUAL_SCHEMES:
+            self.dual_scheme_index = DUAL_SCHEMES.index(scheme_or_idx)
         self.dual_scheme = DUAL_SCHEMES[self.dual_scheme_index]
         return self.dual_scheme
 

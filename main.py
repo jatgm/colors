@@ -131,6 +131,11 @@ class BeatStrobeApp:
                             continue
 
                         # Modal Close Handlers
+                        if getattr(self.hud, "open_dropdown", None) is not None:
+                            if event.key == pygame.K_ESCAPE:
+                                self.hud.open_dropdown = None
+                                continue
+
                         if self.hud.show_sync_modal:
                             if event.key in (pygame.K_ESCAPE, pygame.K_n):
                                 self.hud.show_sync_modal = False
@@ -242,7 +247,7 @@ class BeatStrobeApp:
                                 self.lenovo_mgr,
                                 self.media_mgr,
                             )
-                            if not consumed and is_double and not self.hud.show_sync_modal:
+                            if not consumed and is_double and not self.hud.show_sync_modal and not getattr(self.hud, "open_dropdown", None):
                                 self.cycle_display_mode()
 
                     elif event.type == pygame.MOUSEBUTTONUP:

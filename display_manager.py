@@ -169,6 +169,15 @@ class DisplayManager:
         self.current_mode = self.available_modes[self.current_mode_index]
         return self.current_mode
 
+    def set_display_mode(self, mode_or_idx):
+        """Set the display arrangement mode by mode name or index."""
+        if isinstance(mode_or_idx, int):
+            self.current_mode_index = mode_or_idx % len(self.available_modes)
+        elif mode_or_idx in self.available_modes:
+            self.current_mode_index = self.available_modes.index(mode_or_idx)
+        self.current_mode = self.available_modes[self.current_mode_index]
+        return self.current_mode
+
     def apply_current_mode(self):
         """
         Creates and positions the Pygame display window according to current mode.

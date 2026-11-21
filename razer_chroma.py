@@ -176,7 +176,7 @@ class KeyboardMatrixEngine:
                             "max_radius": 24.0,
                             "color": k_col,
                             "intensity": 1.0,
-                            "decay": 3.4,
+                            "decay": 6.8 if strobe_cut else 3.4,
                         })
 
             is_snare = audio_state.get("is_snare", False)
@@ -215,8 +215,10 @@ class KeyboardMatrixEngine:
                 self.matrix[1:, :] = col_left
 
         # 4. Row 0: 22-Key Live Frequency Spectrum VU Meter
+        # In strobe mode, active during flash frames or continuous in smooth rave mode (strobe_cut=False)
         bars = audio_state.get("spectrum_bars", None) if audio_state else None
-        if bars is not None and len(bars) > 0:
+        show_spectrum = (bars is not None and len(bars) > 0) and (not strobe_cut or has_screen_color)
+        if show_spectrum:
             bands_22 = np.interp(np.linspace(0, len(bars) - 1, self.COLS), np.arange(len(bars)), bars)
             for c in range(self.COLS):
                 v = float(bands_22[c])
@@ -252,12 +254,12 @@ class KeyboardMatrixEngine:
                         cur[:, i] = np.clip(cur[:, i] + sw["color"][i] * crest_int, 0, 255)
                     self.matrix[1:][mask] = cur.astype(np.uint8)
 
-                # Epicenter spacebar white-hot detonation flare
+                # Epicenter spacebar white-hot detonation flare (blinding white core)
                 if sw["radius"] < 3.5:
                     space_int = max(0.0, 1.0 - sw["radius"] / 3.5) * sw["intensity"]
                     sp_slice = self.matrix[5, 6:11].astype(np.float32)
                     for i in range(3):
-                        sp_slice[:, i] = np.clip(sp_slice[:, i] + 255.0 * space_int * 0.70 + sw["color"][i] * space_int, 0, 255)
+                        sp_slice[:, i] = np.clip(sp_slice[:, i] + 255.0 * space_int * 0.90 + sw["color"][i] * space_int, 0, 255)
                     self.matrix[5, 6:11] = sp_slice.astype(np.uint8)
 
                 # Trailing afterglow
@@ -269,6 +271,13 @@ class KeyboardMatrixEngine:
                         cur[:, i] = np.clip(cur[:, i] + sw["color"][i] * trail_int, 0, 255)
                     self.matrix[1:][trail_mask] = cur.astype(np.uint8)
         self.shockwaves = active_sw
+
+        # 808 Sub-bass bottom row accent
+        if audio_state and audio_state.get("is_808", False) and has_screen_color:
+            sub_col = np.array(col_left if max(col_left) > 40 else (157, 0, 255), dtype=np.float32)
+            cur_r5 = self.matrix[5].astype(np.float32)
+            cur_r5 = np.clip(cur_r5 * 0.4 + sub_col * 0.8, 0, 255)
+            self.matrix[5] = cur_r5.astype(np.uint8)
 
         # 6. Snare Lateral Horizontal Wave (Rows 2, 3, 4)
         if self.snare_intensity > 0.0:
@@ -512,14 +521,10 @@ class RazerChromaManager:
         buf_kbd_bright = bytearray(91); buf_kbd_bright[1:] = rep_kbd_bright
         cbuf_kbd_bright = (ctypes.c_char * 91).from_buffer(buf_kbd_bright)
 
-        # Mouse logo brightness (0x0F, 0x04, 0x03) with txn 0x3F (LOGO_LED = 0x04)
+        # Mouse logo brightness (0x0F, 0x04, 0x03) with txn 0x3F (LOGO_LED = 0x04) - volatile VARSTORE
         rep_mouse_bright_vol = _create_razer_report(0x0F, 0x04, 0x03, [0x01, 0x04, 0xFF], txn=0x3F)
         buf_mouse_bright_vol = bytearray(91); buf_mouse_bright_vol[1:] = rep_mouse_bright_vol
         cbuf_mouse_bright_vol = (ctypes.c_char * 91).from_buffer(buf_mouse_bright_vol)
-
-        rep_mouse_bright_nonvol = _create_razer_report(0x0F, 0x04, 0x03, [0x00, 0x04, 0xFF], txn=0x3F)
-        buf_mouse_bright_nonvol = bytearray(91); buf_mouse_bright_nonvol[1:] = rep_mouse_bright_nonvol
-        cbuf_mouse_bright_nonvol = (ctypes.c_char * 91).from_buffer(buf_mouse_bright_nonvol)
 
         # Mouse scroll wheel brightness (0x0F, 0x04, 0x03) with txn 0x3F (SCROLL_WHEEL_LED = 0x01)
         rep_sw_bright = _create_razer_report(0x0F, 0x04, 0x03, [0x01, 0x01, 0xFF], txn=0x3F)
@@ -532,12 +537,12 @@ class RazerChromaManager:
         cbuf_leg_bright = (ctypes.c_char * 91).from_buffer(buf_leg_bright)
 
         # 3. Initial Hardware Blackout using EFFECT_NONE (0x0F, 0x02, 0x06) and STATIC (0,0,0) (0x0F, 0x02, 0x09)
-        # Prevents mouse from falling back to default onboard breathing or spectrum cycling
+        # Uses volatile VARSTORE (0x01) to eliminate EEPROM wear and avoid RAZER_CMD_BUSY lockup
         rep_black_kbd = _create_razer_report(0x0F, 0x02, 0x06, [0x00, 0x05, 0x00, 0x00, 0x00, 0x00], txn=0x1F)
         buf_black_kbd = bytearray(91); buf_black_kbd[1:] = rep_black_kbd
         cbuf_black_kbd = (ctypes.c_char * 91).from_buffer(buf_black_kbd)
 
-        rep_black_mouse = _create_razer_report(0x0F, 0x02, 0x06, [0x00, 0x04, 0x00, 0x00, 0x00, 0x00], txn=0x3F)
+        rep_black_mouse = _create_razer_report(0x0F, 0x02, 0x06, [0x01, 0x04, 0x00, 0x00, 0x00, 0x00], txn=0x3F)
         buf_black_mouse = bytearray(91); buf_black_mouse[1:] = rep_black_mouse
         cbuf_black_mouse = (ctypes.c_char * 91).from_buffer(buf_black_mouse)
 
@@ -545,15 +550,11 @@ class RazerChromaManager:
         buf_mouse_static_black_vol = bytearray(91); buf_mouse_static_black_vol[1:] = rep_mouse_static_black_vol
         cbuf_mouse_static_black_vol = (ctypes.c_char * 91).from_buffer(buf_mouse_static_black_vol)
 
-        rep_mouse_static_black_nonvol = _create_razer_report(0x0F, 0x02, 0x09, [0x00, 0x04, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x3F)
-        buf_mouse_static_black_nonvol = bytearray(91); buf_mouse_static_black_nonvol[1:] = rep_mouse_static_black_nonvol
-        cbuf_mouse_static_black_nonvol = (ctypes.c_char * 91).from_buffer(buf_mouse_static_black_nonvol)
-
-        rep_black_sw = _create_razer_report(0x0F, 0x02, 0x06, [0x00, 0x01, 0x00, 0x00, 0x00, 0x00], txn=0x3F)
+        rep_black_sw = _create_razer_report(0x0F, 0x02, 0x06, [0x01, 0x01, 0x00, 0x00, 0x00, 0x00], txn=0x3F)
         buf_black_sw = bytearray(91); buf_black_sw[1:] = rep_black_sw
         cbuf_black_sw = (ctypes.c_char * 91).from_buffer(buf_black_sw)
 
-        rep_sw_static_black = _create_razer_report(0x0F, 0x02, 0x09, [0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x3F)
+        rep_sw_static_black = _create_razer_report(0x0F, 0x02, 0x09, [0x01, 0x01, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x3F)
         buf_sw_static_black = bytearray(91); buf_sw_static_black[1:] = rep_sw_static_black
         cbuf_sw_static_black = (ctypes.c_char * 91).from_buffer(buf_sw_static_black)
 
@@ -569,15 +570,14 @@ class RazerChromaManager:
                     self.hid.HidD_SetFeature(dev.handle, cbuf_black_kbd, 91)
                 elif dev.device_type == "mouse":
                     self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_bright_vol, 91)
-                    self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_bright_nonvol, 91)
                     self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_static_black_vol, 91)
-                    self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_static_black_nonvol, 91)
                     self.hid.HidD_SetFeature(dev.handle, cbuf_black_mouse, 91)
                     if dev.pid == 0x0078:
                         dev.has_scroll_wheel = False
                     elif getattr(dev, "has_scroll_wheel", False):
                         self.hid.HidD_SetFeature(dev.handle, cbuf_sw_bright, 91)
                         self.hid.HidD_SetFeature(dev.handle, cbuf_sw_static_black, 91)
+                        self.hid.HidD_SetFeature(dev.handle, cbuf_black_sw, 91)
                         self.hid.HidD_SetFeature(dev.handle, cbuf_black_sw, 91)
                     else:
                         # Probe if mouse supports scroll wheel LED
@@ -659,23 +659,18 @@ class RazerChromaManager:
         cbuf_kbd_off = (ctypes.c_char * 91).from_buffer(buf_kbd_off)
 
         buf_mouse_off = bytearray(91)
-        buf_mouse_off[1:] = _create_razer_report(0x0F, 0x02, 0x06, [0x00, 0x04, 0x00, 0x00, 0x00, 0x00], txn=0x3F)
+        buf_mouse_off[1:] = _create_razer_report(0x0F, 0x02, 0x06, [0x01, 0x04, 0x00, 0x00, 0x00, 0x00], txn=0x3F)
         cbuf_mouse_off = (ctypes.c_char * 91).from_buffer(buf_mouse_off)
 
-        # Pre-allocate mouse static blackout command (0x0F, 0x02, 0x09) on LOGO (0x04)
-        # Prevents mouse firmware from reverting to onboard profile (breathing/rainbow)
+        # Pre-allocate mouse static blackout command (0x0F, 0x02, 0x09) on LOGO (0x04) with VARSTORE (0x01)
         buf_mouse_static_black_vol = bytearray(91)
         buf_mouse_static_black_vol[1:] = _create_razer_report(0x0F, 0x02, 0x09, [0x01, 0x04, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x3F)
         cbuf_mouse_static_black_vol = (ctypes.c_char * 91).from_buffer(buf_mouse_static_black_vol)
 
-        buf_mouse_static_black_nonvol = bytearray(91)
-        buf_mouse_static_black_nonvol[1:] = _create_razer_report(0x0F, 0x02, 0x09, [0x00, 0x04, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x3F)
-        cbuf_mouse_static_black_nonvol = (ctypes.c_char * 91).from_buffer(buf_mouse_static_black_nonvol)
-
         cbuf_mouse_static_black = cbuf_mouse_static_black_vol
 
         buf_sw_off = bytearray(91)
-        buf_sw_off[1:] = _create_razer_report(0x0F, 0x02, 0x06, [0x00, 0x01, 0x00, 0x00, 0x00, 0x00], txn=0x3F)
+        buf_sw_off[1:] = _create_razer_report(0x0F, 0x02, 0x06, [0x01, 0x01, 0x00, 0x00, 0x00, 0x00], txn=0x3F)
         cbuf_sw_off = (ctypes.c_char * 91).from_buffer(buf_sw_off)
 
         # Pre-allocate mouse scroll wheel static blackout command (0x0F, 0x02, 0x09) on SCROLL (0x01)
@@ -701,11 +696,9 @@ class RazerChromaManager:
             row_bufs.append(buf)
             cbuf_rows.append((ctypes.c_char * 91).from_buffer(buf))
 
-        # Pre-allocate mouse logo and scroll wheel illuminated buffers
+        # Pre-allocate mouse logo and scroll wheel illuminated buffers (volatile VARSTORE only)
         buf_mouse_logo_vol = bytearray(91)
         cbuf_mouse_logo_vol = (ctypes.c_char * 91).from_buffer(buf_mouse_logo_vol)
-        buf_mouse_logo_nonvol = bytearray(91)
-        cbuf_mouse_logo_nonvol = (ctypes.c_char * 91).from_buffer(buf_mouse_logo_nonvol)
         buf_mouse_logo = buf_mouse_logo_vol
         cbuf_mouse_logo = cbuf_mouse_logo_vol
 
@@ -761,17 +754,17 @@ class RazerChromaManager:
             if not devs or not self.enabled:
                 continue
 
-            # 1. Update Mouse Peripherals immediately (zero latency, volatile VARSTORE + non-volatile reports)
+            # 1. Update Mouse Peripherals immediately (zero latency, volatile VARSTORE reports)
             m_col = b_right if max(b_right) > 0 else b_left
             is_mouse_blackout = (max(m_col) == 0)
             for dev in devs:
                 if dev.device_type != "mouse":
                     continue
                 try:
+                    led_id = getattr(dev, "led_id", 0x04)
                     if is_mouse_blackout:
                         if not was_mouse_blackout:
                             self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_static_black_vol, 91)
-                            self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_static_black_nonvol, 91)
                             self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_off, 91)
                             if getattr(dev, "has_scroll_wheel", False):
                                 self.hid.HidD_SetFeature(dev.handle, cbuf_sw_static_black_vol, 91)
@@ -782,13 +775,9 @@ class RazerChromaManager:
                         was_mouse_blackout = False
                         if m_col != last_sent_mouse_color:
                             last_sent_mouse_color = m_col
-                            rep_ml_vol = _create_razer_report(0x0F, 0x02, 0x09, [0x01, 0x04, 0x01, 0x00, 0x00, 0x01, m_col[0], m_col[1], m_col[2]], txn=0x3F)
+                            rep_ml_vol = _create_razer_report(0x0F, 0x02, 0x09, [0x01, led_id, 0x01, 0x00, 0x00, 0x01, m_col[0], m_col[1], m_col[2]], txn=0x3F)
                             buf_mouse_logo_vol[1:] = rep_ml_vol
                             self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_logo_vol, 91)
-
-                            rep_ml_nonvol = _create_razer_report(0x0F, 0x02, 0x09, [0x00, 0x04, 0x01, 0x00, 0x00, 0x01, m_col[0], m_col[1], m_col[2]], txn=0x3F)
-                            buf_mouse_logo_nonvol[1:] = rep_ml_nonvol
-                            self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_logo_nonvol, 91)
 
                             if getattr(dev, "has_scroll_wheel", False):
                                 rep_sw = _create_razer_report(0x0F, 0x02, 0x09, [0x01, 0x01, 0x01, 0x00, 0x00, 0x01, m_col[0], m_col[1], m_col[2]], txn=0x3F)

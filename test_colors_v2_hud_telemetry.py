@@ -206,3 +206,59 @@ class TestHardwareSynchronization(unittest.TestCase):
         mgr._strobe_cut = False
         mgr._has_pending = True
         self.assertTrue(mgr._has_pending)
+
+    def test_happylighting_contrast_toggle_stability_across_frames(self):
+        """Verify HappyLighting maintains the same channel during all 120 FPS frames of a single beat flash."""
+        mgr = HappyLightingManager()
+        mgr._contrast_toggle = 0
+        # Frame 1 of flash_id=42
+        mgr.set_colors((255, 0, 0), (0, 0, 255), strobe_cut=True, flash_id=42)
+        with mgr.lock:
+            col_frame1 = mgr._target_color
+            trig_count_1 = mgr._flash_trigger_id
+
+        # Frames 2..10 of same flash_id=42
+        for _ in range(9):
+            mgr.set_colors((255, 0, 0), (0, 0, 255), strobe_cut=True, flash_id=42)
+            with mgr.lock:
+                self.assertEqual(mgr._target_color, col_frame1)
+                self.assertEqual(mgr._flash_trigger_id, trig_count_1)
+
+        # New beat with flash_id=43 must alternate
+        mgr.set_colors((255, 0, 0), (0, 0, 255), strobe_cut=True, flash_id=43)
+        with mgr.lock:
+            self.assertNotEqual(mgr._target_color, col_frame1)
+            self.assertEqual(mgr._flash_trigger_id, trig_count_1 + 1)
+
+    def test_keyboard_matrix_strobe_blackout_gating(self):
+        """Verify KeyboardMatrixEngine gates spectrum bars during strobe blackout to achieve true black."""
+        from razer_chroma import KeyboardMatrixEngine
+        eng = KeyboardMatrixEngine()
+        audio_state = {"spectrum_bars": [0.8] * 8, "total_level": 0.5}
+
+        # During strobe blackout (strobe_cut=True and screen is black):
+        matrix, is_black = eng.generate_matrix(
+            0.016, (0, 0, 0), (0, 0, 0), strobe_cut=True, audio_state=audio_state
+        )
+        self.assertTrue(is_black)
+        self.assertEqual(matrix.max(), 0)
+
+        # In smooth rave mode (strobe_cut=False), spectrum bars should be visible:
+        matrix_smooth, is_black_smooth = eng.generate_matrix(
+            0.016, (0, 240, 255), (0, 240, 255), strobe_cut=False, audio_state=audio_state
+        )
+        self.assertFalse(is_black_smooth)
+        self.assertGreater(matrix_smooth[0].max(), 0)
+
+    def test_keyboard_matrix_808_sub_bass_bottom_row(self):
+        """Verify 808 sub-bass events excite the bottom row of the keyboard matrix."""
+        from razer_chroma import KeyboardMatrixEngine
+        eng = KeyboardMatrixEngine()
+        audio_808 = {"is_808": True, "total_level": 0.9, "spectrum_bars": [0.5] * 8}
+
+        matrix, is_black = eng.generate_matrix(
+            0.016, (0, 240, 255), (0, 240, 255), strobe_cut=True, audio_state=audio_808
+        )
+        self.assertFalse(is_black)
+        # Row 5 (bottom row: Ctrl, Spacebar, Arrows) should be strongly illuminated
+        self.assertGreater(matrix[5].max(), 100)

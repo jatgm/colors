@@ -1,5 +1,5 @@
 @echo off
-title Beat Strobe - Audio Color Strober
+title colors - Audio Visualizer & Strobe System
 cd /d "%~dp0"
 python main.py
 if errorlevel 1 (

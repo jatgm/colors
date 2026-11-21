@@ -109,6 +109,15 @@ class HappyLightingManager:
             strobe_cut = secondary_rgb
             secondary_rgb = None
 
+        # Check if this invocation represents a new beat strike edge
+        is_new_beat = False
+        if flash_id is not None and flash_id != getattr(self, "_last_input_flash_id", -1):
+            self._last_input_flash_id = flash_id
+            if (max(rgb[:3]) > 0 or (secondary_rgb and max(secondary_rgb[:3]) > 0)) or not strobe_cut:
+                is_new_beat = True
+        elif (max(rgb[:3]) > 0 or (secondary_rgb and max(secondary_rgb[:3]) > 0)) and getattr(self, "_last_cmd_color", (0, 0, 0)) == (0, 0, 0):
+            is_new_beat = True
+
         # Multi-monitor / alternating dual-scheme support: select active flashing channel
         if secondary_rgb is not None:
             max_left = max(rgb[:3])
@@ -125,8 +134,9 @@ class HappyLightingManager:
                 # Both non-zero and equal (e.g. dual contrast mode where both monitors flash at max 255)
                 # Alternate between channels across beats so both screen colors are visible on the strip
                 if rgb != secondary_rgb and strobe_cut:
-                    self._contrast_toggle = 1 - getattr(self, "_contrast_toggle", 0)
-                    active_rgb = secondary_rgb if self._contrast_toggle == 1 else rgb
+                    if is_new_beat:
+                        self._contrast_toggle = 1 - getattr(self, "_contrast_toggle", 0)
+                    active_rgb = secondary_rgb if getattr(self, "_contrast_toggle", 0) == 1 else rgb
                 else:
                     active_rgb = rgb
         else:
@@ -145,10 +155,8 @@ class HappyLightingManager:
         with self.lock:
             # Trigger ID edge tracking
             is_new_flash = False
-            if flash_id is not None and flash_id != getattr(self, "_last_input_flash_id", -1):
-                self._last_input_flash_id = flash_id
-                if c != (0, 0, 0):
-                    is_new_flash = True
+            if is_new_beat and c != (0, 0, 0):
+                is_new_flash = True
             elif c != (0, 0, 0) and self._last_cmd_color == (0, 0, 0):
                 is_new_flash = True
             elif c != (0, 0, 0) and strobe_cut and c != self._last_cmd_color:

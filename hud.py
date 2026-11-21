@@ -1864,7 +1864,7 @@ class HUD:
         # BPM & Section telemetry
         bpm = audio_state.get("bpm", 0.0)
         bpm_conf = audio_state.get("bpm_confidence", 0.0)
-        sec_name = audio_state.get("section", "NORMAL")
+        sec_name = audio_state.get("section_name", audio_state.get("section", "NORMAL"))
         stat_str = f"BPM: {bpm:.1f} ({int(bpm_conf*100)}% conf) | SEC: {sec_name}"
         stat_s = self.font_tiny.render(stat_str, True, (130, 160, 195))
         c_surf.blit(stat_s, (c_w - 240, 8))

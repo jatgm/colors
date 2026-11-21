@@ -16,6 +16,8 @@ import threading
 import asyncio
 import datetime
 import hashlib
+import subprocess
+import urllib.request
 from typing import List, Tuple, Optional, Dict, Any
 import numpy as np
 import pygame
@@ -133,7 +135,7 @@ try:
 except ImportError:
     pass
 
-if not WINRT_AVAILABLE:
+if sys.platform == "win32" and not WINRT_AVAILABLE:
     _LOGGER.warning("Neither winrt nor winsdk media control libraries available. Install via 'pip install winrt-Windows.Media.Control'")
 
 
@@ -478,7 +480,11 @@ class MediaArtManager:
             return self.hud_thumbnail
 
     def _worker_thread_main(self):
-        """Worker thread entry point running an asyncio event loop."""
+        """Worker thread entry point."""
+        if sys.platform == "darwin":
+            self._macos_worker_loop()
+            return
+
         if not WINRT_AVAILABLE:
             with self.lock:
                 self.status = "WinRT Media Control unavailable"
@@ -492,6 +498,189 @@ class MediaArtManager:
             _LOGGER.debug("Media worker thread encountered error: %s", e)
         finally:
             loop.close()
+
+    def _macos_worker_loop(self):
+        """macOS media monitoring loop querying Spotify and Apple Music via AppleScript."""
+        with self.lock:
+            self.status = "Listening for media..."
+
+        cached_art_bytes: Dict[str, bytes] = {}
+        last_track_id = ""
+        active_app = None
+
+        script = '''
+tell application "System Events"
+    set hasSpotify to (exists (processes where bundle identifier is "com.spotify.client"))
+    set hasMusic to (exists (processes where bundle identifier is "com.apple.Music"))
+end tell
+
+if hasSpotify then
+    tell application "Spotify"
+        try
+            set tName to name of current track
+            set aName to artist of current track
+            set alName to album of current track
+            set artUrl to artwork url of current track
+            set tDur to (duration of current track) / 1000
+            set pPos to player position
+            set pState to player state as string
+            return "SPOTIFY|||" & tName & "|||" & aName & "|||" & alName & "|||" & artUrl & "|||" & tDur & "|||" & pPos & "|||" & pState
+        on error
+        end try
+    end tell
+end if
+
+if hasMusic then
+    tell application "Music"
+        try
+            set tName to name of current track
+            set aName to artist of current track
+            set alName to album of current track
+            set tDur to duration of current track
+            set pPos to player position
+            set pState to player state as string
+            return "MUSIC|||" & tName & "|||" & aName & "|||" & alName & "|||" & "" & "|||" & tDur & "|||" & pPos & "|||" & pState
+        on error
+        end try
+    end tell
+end if
+
+return "NONE"
+'''
+
+        while self.running:
+            # Handle seeking from HUD
+            while not self._seek_queue.empty():
+                try:
+                    seek_pos = self._seek_queue.get_nowait()
+                    if active_app == "SPOTIFY":
+                        subprocess.run(
+                            ["osascript", "-e", f'tell application "Spotify" to set player position to {float(seek_pos)}'],
+                            capture_output=True,
+                            timeout=2,
+                        )
+                    elif active_app == "MUSIC":
+                        subprocess.run(
+                            ["osascript", "-e", f'tell application "Music" to set player position to {float(seek_pos)}'],
+                            capture_output=True,
+                            timeout=2,
+                        )
+                except Exception:
+                    pass
+
+            try:
+                res = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=3)
+                output = res.stdout.strip() if res.returncode == 0 else ""
+                if not output or output == "NONE":
+                    active_app = None
+                    with self.lock:
+                        if self.is_playing:
+                            self.is_playing = False
+                            self.is_paused = True
+                            self.status = "Paused"
+                    time.sleep(0.5)
+                    continue
+
+                parts = output.split("|||")
+                if len(parts) >= 8:
+                    app_name, title, artist, album, art_url, dur_str, pos_str, state_str = parts[:8]
+                    active_app = app_name
+                    try:
+                        cur_dur = float(dur_str)
+                    except ValueError:
+                        cur_dur = 0.0
+                    try:
+                        cur_pos = float(pos_str)
+                    except ValueError:
+                        cur_pos = 0.0
+
+                    is_playing = (state_str.lower() == "playing")
+                    is_paused = (state_str.lower() in ("paused", "stopped"))
+                    track_id = f"{artist.strip().lower()} - {title.strip().lower()}"
+                    track_changed = (track_id != last_track_id)
+                    status_str = f"Paused: {title}" if (is_paused and title) else (f"Playing: {title}" if title else "Ready")
+
+                    # Update playback state & timeline
+                    with self.lock:
+                        status_changed = (self.is_paused != is_paused) or (self.is_playing != is_playing)
+                        if cur_dur > 0:
+                            self.timeline_position = cur_pos
+                            self.timeline_duration = cur_dur
+                            self.timeline_last_wall_time = time.time()
+                        if status_changed or track_changed:
+                            self.is_paused = is_paused
+                            self.is_playing = is_playing
+                            self.status = status_str
+
+                    if track_changed:
+                        last_track_id = track_id
+                        with self.lock:
+                            if track_id in self._waveform_cache:
+                                self.current_waveform = self._waveform_cache[track_id].copy()
+                                self.current_waveform_r = self._waveform_cache_r.get(track_id, self.current_waveform).copy()
+                            else:
+                                self.current_waveform = generate_song_waveform(title, artist, cur_dur, self.num_waveform_bars, channel=0)
+                                self.current_waveform_r = generate_song_waveform(title, artist, cur_dur, self.num_waveform_bars, channel=1)
+                                self._waveform_cache[track_id] = self.current_waveform
+                                self._waveform_cache_r[track_id] = self.current_waveform_r
+
+                        # Download / extract album art
+                        thumb_bytes = None
+                        if art_url and art_url.startswith("http"):
+                            if art_url in cached_art_bytes:
+                                thumb_bytes = cached_art_bytes[art_url]
+                            else:
+                                try:
+                                    req = urllib.request.Request(art_url, headers={"User-Agent": "BeatStrobe/1.0"})
+                                    with urllib.request.urlopen(req, timeout=4) as response:
+                                        thumb_bytes = response.read()
+                                        cached_art_bytes[art_url] = thumb_bytes
+                                except Exception as e:
+                                    _LOGGER.debug("Failed downloading macOS artwork: %s", e)
+
+                        if thumb_bytes:
+                            palette = extract_cover_palette(thumb_bytes, num_colors=5)
+                            hud_thumb = None
+                            try:
+                                surf = pygame.image.load(io.BytesIO(thumb_bytes))
+                                scaled = pygame.transform.smoothscale(surf, (38, 38))
+                                hud_thumb = pygame.Surface((40, 40), pygame.SRCALPHA)
+                                hud_thumb.fill((0, 0, 0, 0))
+                                pygame.draw.rect(hud_thumb, (40, 45, 60), (0, 0, 40, 40), border_radius=5)
+                                hud_thumb.blit(scaled, (1, 1))
+                                pygame.draw.rect(hud_thumb, palette[0], (0, 0, 40, 40), width=1, border_radius=5)
+                            except Exception as e:
+                                _LOGGER.debug("Error creating HUD thumb: %s", e)
+
+                            with self.lock:
+                                self.title = title
+                                self.artist = artist
+                                self.album = album
+                                self.has_art = True
+                                self.is_paused = is_paused
+                                self.is_playing = is_playing
+                                self.status = status_str
+                                self.current_palette = palette
+                                self.thumbnail_bytes = thumb_bytes
+                                self.hud_thumbnail = hud_thumb
+                                self.update_count += 1
+                        else:
+                            with self.lock:
+                                self.title = title
+                                self.artist = artist
+                                self.album = album
+                                self.has_art = False
+                                self.is_paused = is_paused
+                                self.is_playing = is_playing
+                                self.status = status_str
+                                self.thumbnail_bytes = None
+                                self.hud_thumbnail = None
+                                self.update_count += 1
+
+            except Exception as e:
+                _LOGGER.debug("macOS media worker loop exception: %s", e)
+
+            time.sleep(0.35)
 
     async def _async_loop(self):
         """Asynchronous monitoring loop using Windows Runtime SessionManager."""

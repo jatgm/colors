@@ -3,6 +3,10 @@ import sys
 if not hasattr(sys, 'coinit_flags'):
     sys.coinit_flags = 0
 
+import warnings
+# Suppress soundcard loopback warning on macOS
+warnings.filterwarnings("ignore", category=Warning, module="soundcard")
+
 import collections
 import threading
 import time
@@ -164,6 +168,15 @@ class AudioCaptureManager:
         if PROCTAP_AVAILABLE:
             self.devices.append("spotify")
             self.device_names.append(DEVICE_SPOTIFY)
+
+        if not self.devices:
+            try:
+                def_mic = sc.default_microphone()
+                if def_mic:
+                    self.devices = [def_mic]
+                    self.device_names = [f"[Mic] {def_mic.name}"]
+            except Exception:
+                pass
 
         if not self.devices:
             try:
@@ -496,7 +509,19 @@ class AudioCaptureManager:
                 continue
 
             try:
-                with device.recorder(samplerate=SAMPLE_RATE, blocksize=CHUNK_SIZE) as recorder:
+                # On macOS CoreAudio, specifying blocksize > 512 raises TypeError because CoreAudio
+                # hardware buffer size is strictly capped. Leaving blocksize default allows soundcard
+                # to initialize the AudioUnit with native hardware buffer size while record(numframes=CHUNK_SIZE)
+                # smoothly accumulates the requested frames across all platforms.
+                try:
+                    if sys.platform == "darwin":
+                        rec_ctx = device.recorder(samplerate=SAMPLE_RATE)
+                    else:
+                        rec_ctx = device.recorder(samplerate=SAMPLE_RATE, blocksize=CHUNK_SIZE)
+                except TypeError:
+                    rec_ctx = device.recorder(samplerate=SAMPLE_RATE)
+
+                with rec_ctx as recorder:
                     while self.running and not self.demo_mode:
                         data = recorder.record(numframes=CHUNK_SIZE)
                         if data is None or len(data) == 0:

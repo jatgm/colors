@@ -18,10 +18,12 @@ MID_FREQ_RANGE = (260, 2800)
 HIGH_FREQ_RANGE = (2800, 7500)
 HIHAT_FREQ_RANGE = (7500, 16000)
 
-# Strobe Modes
-MODE_SMART_RHYTHM = "[SMART] Smart Rhythm (PLL Sync)"
-MODE_STROBE_2_0 = MODE_SMART_RHYTHM  # Legacy alias
-MODE_CLASSIC_RAPID = "[CLASSIC] Classic Rapid Strobe"
+# Strobe Modes / Detection Engines
+MODE_COLORS_2_0 = "colors2.0"
+MODE_COLORS_1_0 = "colors1.0"
+MODE_SMART_RHYTHM = MODE_COLORS_2_0  # Engine alias
+MODE_STROBE_2_0 = MODE_COLORS_2_0     # Legacy alias
+MODE_CLASSIC_RAPID = MODE_COLORS_1_0  # Engine alias
 MODE_PSYCHO_OVERDRIVE = "[OVR] Psycho Overdrive (Ultra)"
 MODE_RED_ONLY = "[RED] Red Only"
 MODE_BASS_ONLY = "[BASS] Bass Only"
@@ -36,8 +38,8 @@ MODE_CHAOS_BLITZ = "Chaos Blitz"
 MODE_MONOCHROME = "Monochrome Blitz"
 
 STROBE_MODES = [
-    MODE_STROBE_2_0,
-    MODE_CLASSIC_RAPID,
+    MODE_COLORS_2_0,
+    MODE_COLORS_1_0,
     MODE_PSYCHO_OVERDRIVE,
     MODE_RED_ONLY,
     MODE_BASS_ONLY,

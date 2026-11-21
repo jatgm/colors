@@ -1,5 +1,5 @@
 """
-Beat Strobe - Screen Color Strober Synced to Audio Beat
+colors - Screen Color Strober Synced to Audio Beat
 Supports multi-monitor borderless fullscreen, Extreme Crazy Overdrive,
 and multi-computer Bluetooth & Network synchronization (Host / Client).
 """
@@ -16,6 +16,8 @@ from config import (
     MAX_DECAY_RATE,
     MIN_PREAMP_GAIN,
     MAX_PREAMP_GAIN,
+    MODE_COLORS_2_0,
+    MODE_COLORS_1_0,
     MODE_SMOOTH_PULSE,
     MODE_ALBUM_ART,
     MODE_STROBE_2_0,
@@ -33,10 +35,10 @@ from lenovo_legion import LenovoLegionManager
 from media_sync import MediaArtManager
 
 
-class BeatStrobeApp:
+class ColorsApp:
     def __init__(self):
         pygame.init()
-        pygame.display.set_caption("BEAT STROBE // DUAL MONITOR & OVERDRIVE")
+        pygame.display.set_caption("colors // DUAL MONITOR & AUDIO VISUALIZER")
 
         # Display manager for multi-monitor setup
         self.display_mgr = DisplayManager()
@@ -161,7 +163,13 @@ class BeatStrobeApp:
 
                         # Main Keybindings
                         if event.key == pygame.K_ESCAPE:
-                            self.running = False
+                            if self.hud.show_console:
+                                self.hud.show_console = False
+                            else:
+                                self.running = False
+                        elif event.key in (pygame.K_BACKQUOTE, pygame.K_F12, pygame.K_g):
+                            # Toggle Real-Time Logic & Math Telemetry Console
+                            self.hud.toggle_console()
                         elif event.key == pygame.K_x:
                             # Toggle Crazy Overdrive Mode!
                             self.visualizer.toggle_overdrive()
@@ -182,14 +190,17 @@ class BeatStrobeApp:
                             # Toggle Bass Only Mode (Sub-Bass & Kick Strobe)
                             self.visualizer.toggle_bass_only()
                         elif event.key in (pygame.K_2, pygame.K_w):
-                            # Toggle Active Detection Engine (Smart PLL vs Classic Raw)
-                            if hasattr(self.visualizer, "toggle_engine"):
-                                self.visualizer.toggle_engine()
+                            # Set / Toggle colors2.0 Engine (Does not affect light mode)
+                            if not self.visualizer.is_colors_2_0_active():
+                                self.visualizer.set_engine(MODE_COLORS_2_0)
                             else:
-                                self.visualizer.toggle_mode_2_0()
+                                self.visualizer.toggle_engine()
                         elif event.key in (pygame.K_3, pygame.K_e):
-                            # Toggle Classic Rapid Strobe Mode (How it was before)
-                            self.visualizer.toggle_classic_rapid()
+                            # Set / Toggle colors1.0 Engine (Does not affect light mode)
+                            if not self.visualizer.is_colors_1_0_active():
+                                self.visualizer.set_engine(MODE_COLORS_1_0)
+                            else:
+                                self.visualizer.toggle_engine()
                         elif event.key in (pygame.K_4, pygame.K_r):
                             # Toggle Red Only Strobe Mode
                             self.visualizer.toggle_red_only()
@@ -435,6 +446,10 @@ class BeatStrobeApp:
             pygame.quit()
 
 
+# Backward-compatible alias
+BeatStrobeApp = ColorsApp
+
+
 if __name__ == "__main__":
-    app = BeatStrobeApp()
+    app = ColorsApp()
     app.run()

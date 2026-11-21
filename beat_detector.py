@@ -146,10 +146,22 @@ class BeatDetector:
         self.section_name = "VERSE"                     # "VERSE", "BUILDUP", or "CHORUS"
         self.section_energy = 0.0
 
+        # Real-time logic rationale & telemetry console log ring buffer
+        self.telemetry_logs = deque(maxlen=60)
+        self._prev_logged_section = None
+        self._prev_logged_bpm = 0.0
+        self._log_event("Audio engine initialized: colors2.0 (Smart PLL)")
+
         # Spotify / Media Timeline priors
         self.timeline_progress = None
         self.timeline_duration = 0.0
         self.timeline_is_playing = False
+
+    def _log_event(self, msg):
+        """Append timestamped telemetry event to the live console log buffer."""
+        now = time.time()
+        time_str = time.strftime("%H:%M:%S", time.localtime(now)) + f".{int((now % 1) * 1000):03d}"
+        self.telemetry_logs.append(f"[{time_str}] {msg}")
 
     def set_timeline_context(self, progress, duration=0.0, is_playing=True):
         """Calibrate song section recognition using Spotify/Windows Media timeline priors."""
@@ -183,10 +195,18 @@ class BeatDetector:
         self.user_gain = max(MIN_PREAMP_GAIN, min(MAX_PREAMP_GAIN, float(val)))
 
     def set_overdrive(self, enabled):
+        was_ovr = self.overdrive_mode
         self.overdrive_mode = bool(enabled)
+        if self.overdrive_mode != was_ovr:
+            state_str = "ENABLED" if self.overdrive_mode else "DISABLED"
+            self._log_event(f"[OVERDRIVE] Overdrive mode {state_str}")
 
     def set_smart_mode(self, enabled):
+        was_smart = self.smart_mode
         self.smart_mode = bool(enabled)
+        if self.smart_mode != was_smart:
+            eng_str = "colors2.0 (Smart PLL)" if self.smart_mode else "colors1.0 (Classic Raw)"
+            self._log_event(f"[ENGINE] Active detection engine switched to {eng_str}")
 
     def process_audio(self, audio_data):
         now = time.time()
@@ -260,6 +280,16 @@ class BeatDetector:
                 "pitch_confidence": 0.0,
                 "is_chorus": False,
                 "section_energy": 0.0,
+                "telemetry_logs": list(self.telemetry_logs),
+                "dynamic_thresh": 0.0,
+                "high_thresh": 0.0,
+                "sub_thresh": 0.0,
+                "bass_flux": 0.0,
+                "high_flux": 0.0,
+                "sub_flux": 0.0,
+                "grid_mult": 1.0,
+                "is_attack_transient": True,
+                "engine_name": "colors2.0" if (self.smart_mode and not self.overdrive_mode) else "colors1.0",
             }
 
         # 2. Dynamic Automatic Gain Control (AGC)
@@ -402,6 +432,12 @@ class BeatDetector:
         else:
             is_attack_transient = True
 
+        if is_smart_active and not is_attack_transient and curr_sub_bass > sub_gate and (now - self.last_808_time < 0.20):
+            if (now - getattr(self, "_last_tail_gate_log", 0.0)) >= 0.15:
+                self._last_tail_gate_log = now
+                self._log_event(f"[808 TAIL GATED] sustain decay {curr_sub_bass:.2f} suppressed (flux {bass_flux:.3f} <= thresh)")
+
+        dynamic_thresh = 0.05
         if len(self.bass_flux_history) >= 8:
             flux_mean = float(np.mean(self.bass_flux_history))
             flux_std = float(np.std(self.bass_flux_history))
@@ -419,6 +455,7 @@ class BeatDetector:
                 is_kick_beat = True
 
         # Specialized 808 Sub-Bass Impact (30Hz - 110Hz fundamental rumble)
+        sub_thresh = 0.04
         if len(self.sub_flux_history) >= 8:
             sub_mean = float(np.mean(self.sub_flux_history))
             sub_std = float(np.std(self.sub_flux_history))
@@ -437,6 +474,14 @@ class BeatDetector:
         if is_kick_beat:
             self.last_kick_time = now
             self._update_bpm(now)
+            if is_808:
+                sub_ratio = sub_flux / max(1e-4, sub_thresh)
+                self._log_event(f"[808 SUB] sub_flux {sub_flux:.3f} > thresh {sub_thresh:.3f} (ratio {sub_ratio:.2f}x) deep sub {curr_sub_bass:.2f}")
+            else:
+                ratio = bass_flux / max(1e-4, dynamic_thresh)
+                grid_str = f"PLL on-grid phi {self.beat_phase:.2f}" if self.is_on_grid_downbeat else f"off-grid phi {self.beat_phase:.2f}"
+                self._log_event(f"[KICK] bass_flux {bass_flux:.3f} > thresh {dynamic_thresh:.3f} (ratio {ratio:.2f}x) {grid_str}")
+
             if is_smart_active and self.estimated_bpm > 45.0 and self.bpm_confidence > 0.20:
                 T_beat = 60.0 / self.estimated_bpm
                 offset = (now - self.last_grid_anchor) % T_beat
@@ -449,6 +494,7 @@ class BeatDetector:
 
         # 7. Dynamic Threshold for Snare
         is_snare_beat = False
+        high_thresh = 0.04
         if len(self.high_flux_history) >= 8:
             high_mean = float(np.mean(self.high_flux_history))
             high_std = float(np.std(self.high_flux_history))
@@ -464,9 +510,12 @@ class BeatDetector:
             ):
                 is_snare_beat = True
                 self.last_snare_time = now
+                s_ratio = high_flux / max(1e-4, high_thresh)
+                self._log_event(f"[SNARE] high_flux {high_flux:.3f} > thresh {high_thresh:.3f} (ratio {s_ratio:.2f}x) backbeat on-grid")
 
         # 8. Dynamic Threshold for Hi-Hats
         is_hihat_beat = False
+        hihat_thresh = 0.03
         if len(self.hihat_flux_history) >= 8:
             hihat_mean = float(np.mean(self.hihat_flux_history))
             hihat_std = float(np.std(self.hihat_flux_history))
@@ -479,6 +528,9 @@ class BeatDetector:
             ):
                 is_hihat_beat = True
                 self.last_hihat_time = now
+                if (now - getattr(self, "_last_hihat_log", 0.0)) >= 0.20:
+                    self._last_hihat_log = now
+                    self._log_event(f"[HIHAT] hihat_flux {hihat_flux:.3f} > thresh {hihat_thresh:.3f}")
 
         # 9. Heavy Drop Detection
         is_drop = False
@@ -486,6 +538,9 @@ class BeatDetector:
             avg_tot = float(np.mean(self.total_energy_history))
             if curr_total > avg_tot * 1.6 and curr_bass > 0.12:
                 is_drop = True
+                if (now - getattr(self, "_last_drop_log", 0.0)) >= 0.50:
+                    self._last_drop_log = now
+                    self._log_event(f"[DROP] explosive bass surge {curr_bass:.2f} > avg {avg_tot:.2f}")
 
         # 10. Perceptual Loudness Curve for Visual Meters (Power curve mapping)
         # Raw RMS energies map into punchy 0% - 100% meter heights
@@ -637,6 +692,12 @@ class BeatDetector:
             self.is_verse = True
             self.section_name = "VERSE"
 
+        # Section state transition with hysteresis locking
+        prev_sec = getattr(self, "_prev_logged_section", None)
+        if self.section_name != prev_sec:
+            self._prev_logged_section = self.section_name
+            self._log_event(f"[SECTION] {self.section_name} active (energy ratio {energy_ratio:.2f}x)")
+
         # Continuous section energy scalar for dynamic modulation
         if self.is_chorus:
             self.section_energy = max(1.25, min(2.0, energy_ratio * 1.15))
@@ -677,6 +738,16 @@ class BeatDetector:
             "is_verse": self.is_verse,
             "section_name": self.section_name,
             "section_energy": float(self.section_energy),
+            "telemetry_logs": list(self.telemetry_logs),
+            "dynamic_thresh": float(dynamic_thresh) if 'dynamic_thresh' in locals() else 0.0,
+            "high_thresh": float(high_thresh) if 'high_thresh' in locals() else 0.0,
+            "sub_thresh": float(sub_thresh) if 'sub_thresh' in locals() else 0.0,
+            "bass_flux": float(bass_flux) if 'bass_flux' in locals() else 0.0,
+            "high_flux": float(high_flux) if 'high_flux' in locals() else 0.0,
+            "sub_flux": float(sub_flux) if 'sub_flux' in locals() else 0.0,
+            "grid_mult": float(grid_mult) if 'grid_mult' in locals() else 1.0,
+            "is_attack_transient": bool(is_attack_transient) if 'is_attack_transient' in locals() else True,
+            "engine_name": "colors2.0" if is_smart_active else "colors1.0",
         }
 
     def _smooth_level(self, current, target, rise_rate, decay_rate):
@@ -718,3 +789,6 @@ class BeatDetector:
 
                 std_interval = float(np.std(intervals))
                 self.bpm_confidence = max(0.0, min(1.0, 1.0 - (std_interval / median_interval)))
+                if self.bpm_confidence > 0.40 and abs(self.estimated_bpm - getattr(self, "_prev_logged_bpm", 0.0)) >= 4.0:
+                    self._prev_logged_bpm = self.estimated_bpm
+                    self._log_event(f"[PLL SYNC] BPM {self.estimated_bpm:.1f} locked (conf {self.bpm_confidence:.2f})")

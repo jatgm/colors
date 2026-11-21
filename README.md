@@ -1,4 +1,4 @@
-# Beat Strobe - Dual Monitor and Multi-Computer Audio Visualizer
+# colors - Dual Monitor and Multi-Computer Audio Visualizer
 
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue)](https://github.com/jatgm/colors)
 [![Python](https://img.shields.io/badge/python-3.8%2B-brightgreen)](https://www.python.org/)
@@ -6,9 +6,9 @@
 
 ## Description
 
-Beat Strobe is a high-performance, real-time desktop audio visualizer that transforms monitors and connected computers into a dynamic music-synchronized strobe light display. Powered by Fast Fourier Transform (FFT) spectral analysis, real-time onset detection, and Dynamic Automatic Gain Control (AGC), Beat Strobe captures audio directly from system output (Spotify, YouTube, browser, media players) or microphone inputs and drives immersive multi-monitor visuals.
+colors is a high-performance, real-time desktop audio visualizer that transforms monitors, peripherals, and connected computers into a dynamic music-synchronized strobe light display. Powered by Fast Fourier Transform (FFT) spectral analysis, real-time onset detection, and Dynamic Automatic Gain Control (AGC), colors captures audio directly from system output (Spotify, YouTube, browser, media players) or microphone inputs and drives immersive multi-monitor visuals.
 
-The application includes multi-computer synchronization over Bluetooth and local Wi-Fi/LAN networks (Host and Client architecture), zero-dependency direct USB HID control for Razer Chroma peripherals, and visual customization options ranging from intense stroboscopic party effects to gentle ambient rave pulses.
+The application includes multi-computer synchronization over Bluetooth and local Wi-Fi/LAN networks (Host and Client architecture), zero-dependency direct USB HID control for Razer Chroma peripherals, Bluetooth BLE room lighting control, and visual customization options ranging from intense stroboscopic party effects to gentle ambient rave pulses.
 
 ### Tags
 
@@ -16,41 +16,101 @@ The application includes multi-computer synchronization over Bluetooth and local
 
 ---
 
+## Detection Engines: colors2.0 vs colors1.0
+
+colors provides two distinct, switchable audio detection architectures:
+
+### 1. colors2.0 (Smart Rhythm Engine)
+- **Phase-Locked Loop (PLL) Tempo Grid**: Internal rhythm oscillator locks phase and frequency to the musical tempo grid (quarter notes, eighths, sixteenths), predicting exactly when downbeats land.
+- **Bayesian Prior Expectation**: When an audio burst arrives on-grid, threshold sensitivity is boosted, rewarding rhythmic consistency and suppressing off-beat background chatter or noise.
+- **808 Attack Transient vs Sustain Tail Isolation**: Isolates the sharp initial attack strike of an 808 sub-bass hit and suppresses false re-triggering during the prolonged decaying rumble tail.
+- **Snare and Clap Backbeat Prior**: Dedicated frequency detection for snares (200-500 Hz) and claps (1000-3000 Hz) aligning with backbeats (beats 2 and 4), producing high-contrast secondary accent flashes.
+- **Decoupled from Light Mode**: Switching engines preserves active solid ambient lighting mode without disruption.
+- **Prominent Header Badge**: Prominently displayed in the HUD header as `[ colors2.0 ]`. Clicking the badge or pressing **`2`** or **`W`** toggles engines.
+
+### 2. colors1.0 (Classic Rapid Strobe Engine)
+- **100% Unconstrained Raw Strobe**: Preserves the ultra-rapid, instantaneous peak detection mode.
+- **Instant Micro-Transient Reaction**: Fires immediate flashes on any raw amplitude peak exceeding threshold without tempo locking or prior quantization.
+- **Prominent Header Badge**: Prominently displayed in the HUD header as `[ colors1.0 ]`. Clicking the badge or pressing **`3`** or **`E`** engages colors1.0.
+
+---
+
+## Real-Time Logic & Math Telemetry Console Log (Hotkey ~ / F12 / G)
+
+colors includes a built-in, cyber-studio real-time telemetry console that exposes the behind-the-scenes mathematics and trigger decision logic in live execution:
+
+- **Live Math Matrix**:
+  - **Kick Trigger Math**: Current bass flux vs dynamic threshold with exact ratio and trigger indicator (e.g. `KICK: flux 0.82 / th 0.54 (1.52x) [TRIG]`).
+  - **Snare Transient Math**: High-band flux vs snare threshold with trigger ratio.
+  - **808 Sub-Bass Math**: Deep sub flux vs sub-bass threshold.
+  - **PLL Grid Multiplier**: Quantized tempo grid multiplier and phase alignment status (`ON-GRID BOOST` vs `OFF-BEAT SUPPRESS`).
+  - **808 Envelope Status**: Real-time identification of `ATTACK IMPACT` vs `SUSTAIN TAIL (GATED)`.
+  - **Energy & AGC Gain**: Live RMS, peak amplitude, input sensitivity, and pre-amp boost readouts.
+- **Live Decision Stream (Terminal Stream)**:
+  - Color-coded scrolling terminal showing exact timestamps and trigger rationale:
+    - `[KICK]` in neon green
+    - `[808 SUB]` in neon purple
+    - `[808 TAIL GATED]` in muted amber (sustain decay suppressed)
+    - `[SNARE]` in electric yellow
+    - `[HIHAT]` in pale ice cyan
+    - `[DROP]` in vivid orange-red
+    - `[SECTION]` in cyan (dynamic song section transitions: Verse, Buildup, Chorus)
+    - `[PLL SYNC]` in electric lime
+- **Instant Access**: Toggle anytime by pressing **`~`** (backquote/tilde), **`F12`**, **`G`**, or clicking **`CONSOLE LOG [~]`** in the HUD header.
+
+---
+
 ## Cyber-Studio Dropdown UI & Automatic Music Detection
 
-Beat Strobe features a completely redesigned, cyber-studio Heads-Up Display (HUD) with interactive dropdown selectors:
-- **Interactive Dropdown Selectors**: Replaced flat cycling buttons with dedicated popover dropdown menus:
-  - **Mode Dropdown**: Interactive drop-up menu listing all 13 strobe modes with instant single-click selection and active checkmarks.
-  - **Palette Dropdown**: Lists all color palettes with live 4-color swatch preview chips drawn beside each palette name.
-  - **Audio Source Dropdown**: Direct selection of isolated Spotify audio, system loopback, and physical microphones.
-  - **Style Dropdown**: Instant selection between Solid Fullscreen, Radial Shockwave, and Horizon Pulse.
-  - **Dual FX Dropdown**: Quick selection of Dual Synced, Ping-Pong Alternating, Complementary Contrast, and Panoramic schemes.
-  - **Display Dropdown**: Direct windowed, single-monitor, and dual-monitor arrangement selection.
-- **Maximized Screen Real Estate**: Streamlined HUD height (~282px) giving full priority to high-impact screen strobe visuals while keeping all essential controls immediately accessible.
-- **Automatic Spotify Detection**: Automatically detects when Spotify is running and isolates pure Spotify audio output from noisy background applications (with seamless fallback to System Audio loopback).
+colors features a redesigned cyber-studio Heads-Up Display (HUD) with interactive dropdown selectors:
+- **Interactive Dropdown Selectors**: Popover menus for Mode, Palette, Audio Source, Style, Dual FX, and Display arrangements.
+- **Prominent Engine Selection**: Header badge clearly distinguishes `[ colors2.0 ]` from `[ colors1.0 ]` with click-to-toggle support.
+- **Independent Light Mode Indicator**: Ambient solid color lighting displays a separate badge (`[LIGHT: <COLOR>]`) that never hides or collides with engine status.
+- **Streamlined HUD Surface**: Height optimized (~282px) giving full priority to high-impact screen strobe visuals while keeping all essential controls immediately accessible.
+- **Automatic Spotify Detection**: Automatically detects when Spotify is running and isolates pure Spotify audio output from background noise.
 - **Default Album Cover Art Synchronization**: Launches directly in Album Cover Art mode, capturing live track artwork and extracting dominant 5-color palettes in real-time.
-- **Consolidated Horizontal Control Deck**: Sensitivity, Preamp Gain, and Decay Rate sliders consolidated side-by-side into a single 3-column row with real-time numeric readouts.
-- **Modular Studio Surface**: Cleanly divided into master audio telemetry, 80px waveform scrub deck, precision mixers, dropdown selectors, ambient solid color lighting bar, and quick hardware toggle pods.
+- **Consolidated Control Deck**: Sensitivity, Preamp Gain, and Decay Rate sliders consolidated side-by-side into a single 3-column row with real-time numeric readouts.
+
+---
+
+## Hardware Peripheral Synchronization
+
+colors features zero-latency direct hardware integration across peripherals and smart lighting:
+
+### Razer Chroma Keyboards & Mice (Hotkey C)
+- **Zero-Dependency Native Control**: Communicates directly through Windows native `hid.dll` and `setupapi.dll` using custom 90-byte Razer HID feature reports without requiring Synapse or third-party background software.
+- **Razer Viper Mouse Synchronization**: Direct PID identification (`0x0078`) and dual volatile/non-volatile feature report transmission (`0x0F, 0x02, 0x09` with `VARSTORE`), routing mouse lighting commands with priority for zero-lag reactivity.
+- **Razer Ornata V2 / Chroma Keyboards**:
+  - **Function Row Real-Time Spectrum Analyzer (Row 0)**: 22-column live equalizer animated across function keycaps.
+  - **Spacebar Kick Epicenter Flare**: White-hot epicenter flare detonating from the spacebar on kick drum impacts with supersonic shockwave propagation outward across typing rows.
+  - **Sub-Bass 808 Bottom-Row Vibration**: Rumble effect along bottom row during sustained sub-bass.
+  - **Snare Lateral Accent Wave**: Rapid horizontal sweep across typing rows in contrasting secondary accent hue.
+  - **Instant Zero-Lag Blackout Cut**: Sub-millisecond hardware blackout reports synchronized with visualizer strobe cuts.
+
+### HappyLighting Bluetooth BLE Room LED Strips (Hotkey L)
+- **Eliminated Timing Jitter & Lag**: Optimized asynchronous BLE streaming loop with queue pre-checks to bypass sleep delays, delivering tight, synchronized room flashes that strike on the exact audio transient.
+
+### Lenovo Legion Gaming Desktop PC RGB (Hotkey K)
+- **Direct PC Case RGB Sync**: Direct motherboard and case lighting integration synchronized to audio transients and strobe cuts.
 
 ---
 
 ## Crazy Overdrive Mode (Hotkey X)
 
 Turn displays into a high-intensity festival strobe rig:
-- **Stroboscopic Burst Trains (Machine-Gun Multi-Flash)**: Instead of a single pulse, each beat fires a rapid train of 3 to 5 micro-flashes at 35Hz.
+- **Stroboscopic Burst Trains (Machine-Gun Multi-Flash)**: Rapid train of 3 to 5 micro-flashes at 35Hz on every major beat.
 - **All-Frequency Multi-Band Triggering**:
   - **Kicks (Sub-Bass)**: Detonate deep color blasts with screen impact shake.
   - **Snares & Claps**: Fire high-brightness phosphor-white accent explosions.
   - **Hi-Hats & Cymbals**: Fire ultra-fast 30-40Hz stroboscopic micro-sparkles on rolls and triplets.
   - **Heavy Drops**: Trigger full blinding-white inverted lightning storms.
-- **Hyper-Fast Cooldowns**: Drops refractory cooldown to 0.035s (~28 beats/sec), catching rapid-fire 16th/32nd note drum rolls and techno drops.
-- **Ping-Pong Alternating Blitz**: On dual monitors, left and right screens alternate micro-bursts at high speeds.
+- **Hyper-Fast Cooldowns**: Drops refractory cooldown to 0.035s (~28 beats/sec), catching rapid-fire 16th/32nd note drum rolls.
 
 ---
 
 ## Multi-Computer Bluetooth and Network Sync
 
-Run Beat Strobe across multiple PCs and laptops in the same space to synchronize all screens to the exact same beat over Bluetooth or Local Area Network (LAN).
+Run colors across multiple PCs and laptops in the same space to synchronize all screens to the exact same beat over Bluetooth or Local Area Network (LAN).
 
 ### Installation and Quick Start
 
@@ -68,120 +128,15 @@ Run Beat Strobe across multiple PCs and laptops in the same space to synchronize
    - On **Windows**: `run.bat`
    - Or directly: `python main.py`
 
-> **Note for macOS System Audio**: macOS does not have native system audio loopback in CoreAudio. Beat Strobe captures your physical microphone out-of-the-box. To capture desktop audio (Spotify, YouTube, browser, etc.) directly, install a free virtual loopback driver such as [BlackHole 2ch](https://github.com/ExistentialAudio/BlackHole) (`brew install blackhole-2ch`); Beat Strobe will automatically detect and prioritize it as `[System Audio]`.
-
 ---
 
-### How Host and Client Mode Work
+## Static Solid Color Lighting Mode (Hotkeys O / 5 / Z)
 
-Press **`N`** (or click `Sync: [BT / Network]` on the HUD) to open the Multi-Computer Sync Panel:
-
-#### 1. Host Mode (The DJ / Music Computer)
-- Switch to the **Host** tab.
-- Broadcasts beat pulses, color palettes, strobe modes, and BPM to all connected computers.
-- Opens a direct **Bluetooth RFCOMM Server** (Channel 4) and a **Local Network Server** (Port 42424), broadcasting UDP discovery beacons every 1.5 seconds.
-- Displays your computer's local Bluetooth address and number of connected computers.
-
-#### 2. Client Mode (Any other laptop / PC)
-- Switch to the **Client** tab.
-- Automatically searches for nearby / paired Bluetooth Devices and Network Host Beacons.
-- Click **Connect** on the detected Host (or click **Enter Host IP / MAC**).
-- Local audio processing pauses on the client, and all screens on the client machine strobe in sub-millisecond lockstep with the Host.
-
----
-
-## Multi-Monitor Setup (Dual Screens)
-
-The program automatically detects all connected monitors (e.g. two 1920x1080 monitors) and defaults to **Dual Monitor Fullscreen (3840x1080)**.
-
-### Dual-Monitor Visual Schemes (Press B or 2):
-1. **Dual Synced**: Both monitors strobe identical vibrant colors in lockstep. Effects are centered individually on each screen to avoid bezel splits.
-2. **Ping-Pong Alternating**: Left and right monitors take turns flashing on consecutive beats (Kick 1 hits Left, Kick 2 hits Right).
-3. **Complementary Contrast**: Left monitor flashes Palette Color A while Right monitor flashes Palette Color B (e.g. Neon Pink on Left, Electric Cyan on Right).
-4. **Panoramic Ultra-Wide**: Spans the entire canvas as one colossal ultra-wide display.
-
----
-
-## Detection Engines: Smart Rhythm PLL vs. Classic Rapid
-
-Beat Strobe provides two distinct, switchable audio detection architectures:
-
-### 1. Smart Rhythm Engine (Default: Phase-Locked Loop Grid & Bayesian Prior)
-- **Phase-Locked Loop (PLL) Tempo Grid**: Internal rhythm oscillator locks phase and frequency to the musical tempo grid (quarter notes, eighths, sixteenths), predicting exactly when downbeats land.
-- **Bayesian Prior Expectation**: When an audio burst arrives on-grid, threshold sensitivity is lowered, rewarding rhythmic consistency and filtering out off-beat chatter or random noise.
-- **808 Attack Transient vs Sustain Tail Isolation**: Detects the sharp initial strike of an 808 sub-bass kick without re-triggering 10 to 15 false flashes during the rumbling bass tail decay.
-- **Snare and Clap Backbeat Prior**: Dedicated frequency detection for snares (200-500 Hz) and claps (1000-3000 Hz) that align on backbeats (beats 2 and 4), producing high-contrast secondary accent flashes.
-- **Live HUD Engine Status Badge**: Displays `ENG: SMART PLL` with glowing cyan status pip. Clicking the badge or pressing **`2`** toggles between Smart PLL and Classic engines.
-
-### 2. Classic Rapid Strobe Engine (Hotkey 3 or E)
-- **100% Unconstrained Raw Strobe**: Preserves the ultra-rapid, instantaneous peak detection mode from previous versions.
-- **Instant Micro-Transient Reaction**: Fires immediate flashes on any raw amplitude peak exceeding threshold without tempo locking or prior quantization.
-- **Live HUD Engine Status Badge**: Displays `ENG: CLASSIC` with bright orange status pip.
-
----
-
-## Razer Chroma Keyboard Per-Key RGB Matrix Engine (Hotkey C)
-
-Beat Strobe connects directly to connected Razer Keyboards and Mice to drive custom 6x22 per-key matrix animations and strobe lighting in real-time synchronization with the screen:
-
-- **Zero-Dependency Native Control**: Communicates directly through Windows native `hid.dll` and `setupapi.dll` using custom 90-byte Razer HID feature reports without requiring Synapse or third-party SDKs.
-- **Supported Hardware**:
-  - **Keyboards**: Razer Ornata V2, BlackWidow series, Huntsman series, Cynosa, DeathStalker, etc. (Full 6-row x 22-column addressable key matrix).
-  - **Mice**: Razer Viper series, DeathAdder series, Basilisk series, Cobra, Naga, etc. (Logo and scroll wheel lighting).
-  - **Accessories**: Firefly mousepads, Chroma headsets, and ARGB controllers.
-- **Per-Key & Per-Row Matrix Animations**:
-  - **Function Row Real-Time EQ Spectrum Analyzer (Row 0: Esc through Pause)**: Maps live audio frequency energy across all 22 columns of the function key row, creating an animated equalizer directly on your keyboard keycaps.
-  - **Spacebar Kick & 808 Radial Shockwaves**: On every kick or drop, an explosive radial shockwave detonates from the Spacebar (Row 5, Col 8) and ripples outward across rows 4, 3, 2, 1, 0, leaving an afterglow trailing towards the screen.
-  - **Snare / Clap Lateral Accent Wave**: Horizontal sweeps burst outward across typing rows 2, 3, 4 with high-contrast secondary accent hues.
-  - **Hi-Hat Micro-Sparkles**: Dynamic diamond-white keycap sparkles dancing across the number and QWERTY rows on cymbal transients.
-  - **Spatial Dual-Monitor Screen Matching**: In dual monitor mode, keyboard columns 0-10 track the Left monitor and room BLE lights, while columns 11-21 track the Right monitor and mouse.
-  - **Instant Zero-Lag Blackout Cut**: Instantaneous hardware blackout report (<0.5ms) synchronized with visualizer strobe cuts.
-  - **Static Solid Color Illumination**: In solid color mode, all 132 keys continuously illuminate in the selected solid color without strobing.
-- **Sub-Millisecond Non-Blocking USB HID Performance**: Pre-allocated ctypes buffers with in-place byte writes, transmitting only changed rows for smooth, stutter-free 60-90 FPS hardware updates.
-
----
-
-## Strobe Modes (Press M to Cycle)
-
-1. **Smart Rhythm (PLL Sync)**: Intelligent tempo grid tracking, 808 transient isolation, melody progression, and musical downbeat synchronization.
-2. **Classic Rapid Strobe**: Raw unconstrained rapid-fire strobe matching original instant peak triggering.
-3. **Psycho Overdrive (Ultra)**: Stroboscopic burst trains, rapid complementary neon flips, hi-hat sparkles, and drop blitzes.
-4. **Red Only (Pure Red Strobe)**: High-intensity pure red strobe flashes (RGB 255, 0, 0) on every beat with absolute pitch-black cutoffs between strikes.
-5. **Bass Only (Pure Low-End Strobe)**: Strictly reacts to kicks, 808s, and heavy sub-bass beats with absolute blackouts between hits (completely ignores snares, hi-hats, mids, and vocals).
-6. **Cover Art Sync**: Real-time sync with dominant colors extracted from Windows Media playback album covers.
-7. **Machine-Gun Multi-Band**: Kicks, snares, and hi-hats excite independent strobe layers simultaneously.
-8. **Hyper Strobe Blitz**: High-frequency concert strobe simulation with instantaneous blackouts.
-9. **Hard Strobe (Classic Rave)**: Instant high-intensity color flash on every kick beat, decaying rapidly to pitch black.
-10. **Kick + Snare Dual**: Bass kick fires primary palette color; snare/clap fires a bright lightning-white accent strobe.
-11. **Smooth Rave Pulse**: Sinusoidal ambient glow that pulses gently with the music without harsh flickers.
-12. **Audio Reactive Spectrum**: Real-time continuous color synthesis based on live audio frequencies.
-13. **Chaos Blitz**: High-energy randomized neon color bursts on every transient drop.
-14. **Monochrome Blitz**: Pure high-contrast black and white strobe flashes.
-
----
-
----
-
-## Native Album Cover Art Sync (Hotkey A)
-
-Beat Strobe connects directly to the native Windows Runtime (`Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager`) to automatically detect media currently playing across Windows media players (Spotify, Apple Music, Tidal, Chrome, Edge, YouTube Music, etc.):
-
-- **Native Cover Art Capture**: Streams the album artwork image bytes directly from the active media session's thumbnail reference without web scraping or third-party API keys.
-- **Intelligent Palette Extraction**: Samples and analyzes the cover artwork in HSV color space, extracting the 5 most vibrant, contrasting dominant colors while filtering out dark mud and washed-out tones.
-- **Dynamic Real-Time Track Updates**: When tracks change, Beat Strobe extracts the new artwork palette on-the-fly and seamlessly transitions strobe colors.
-- **Hardware Peripheral Lockstep**: Screen strobes, Razer Chroma keyboards & mice (`razer_mgr`), HappyLighting BLE room LED strips (`happylighting_mgr`), and Lenovo Legion gaming desktop PC RGB (`lenovo_mgr`) all flash and pulse in perfect sync with the album cover art colors.
-- **HUD Now Playing Card**: Displays a 40x40 thumbnail of the actual album cover, track title, artist name, and 5 color swatch chips on the Heads-Up Display. Clicking the card or pressing **`A`** immediately engages Album Art mode.
-
----
-
-## Static Solid Color Lighting Mode (Hotkeys O / 4 / Z)
-
-Beat Strobe includes a dedicated static lighting system that transforms displays and peripherals into continuous ambient room lighting:
-
-- **1-Click Music vs Solid Toggle**: Click the prominent `[LIGHT] SOLID` / `[LIGHT] MUSIC` button on the HUD to immediately toggle between static illumination and audio-reactive strobe mode.
-- **Interactive Color Swatches Bar**: 14 hand-crafted vibrant color chips directly on the HUD (Pure Red, Orange Neon, Amber Gold, Electric Yellow, Lime Green, Mint Cyan, Sky Blue, Deep Blue, Violet, Magenta Pink, Hot Pink, Warm White, Pure White). Clicking any swatch instantly illuminates screens and hardware with that exact color.
-- **Continuous Hardware Illumination**: All hardware peripherals (Razer Chroma keyboards & mice, HappyLighting Bluetooth room light strips, and Lenovo Legion gaming desktop RGB) stay steadily lit with zero flickering, fading, or blackout strobe cuts.
-- **Hotkey Controls**: Press **`O`**, **`4`**, or **`Z`** to toggle between solid color mode and music strobing. When solid lighting is active, pressing **`P`** cycles through the solid color presets.
+colors includes a dedicated static lighting system that transforms displays and peripherals into continuous ambient room lighting:
+- **1-Click Music vs Solid Toggle**: Click `[LIGHT] SOLID` / `[LIGHT] MUSIC` on the HUD or press **`O`** to immediately toggle between static illumination and audio-reactive strobe mode.
+- **Interactive Color Swatches Bar**: 14 hand-crafted vibrant color chips directly on the HUD (Pure Red, Orange Neon, Amber Gold, Electric Yellow, Lime Green, Mint Cyan, Sky Blue, Deep Blue, Violet, Magenta Pink, Hot Pink, Warm White, Pure White).
+- **Decoupled Detection Engine**: Engaging or disengaging light mode does not alter or reset your underlying `colors2.0` or `colors1.0` engine selection.
+- **Continuous Peripheral Illumination**: Peripherals and room LED strips remain steadily lit without flickering, fading, or strobe blackout cuts.
 
 ---
 
@@ -189,11 +144,12 @@ Beat Strobe includes a dedicated static lighting system that transforms displays
 
 | Key | Action | Description |
 | :--- | :--- | :--- |
-| **`ESC`** | **Exit / Close Modal** | Closes active modal or exits the application safely. |
-| **`5`**, **`O`**, or **`Z`** | **Toggle Solid Color Lighting** | Toggles between static room illumination and music-reactive strobing. |
+| **`ESC`** | **Exit / Close Modal** | Closes telemetry console or active modal, or exits the application safely. |
+| **`~`**, **`F12`**, or **`G`** | **Toggle Telemetry Console** | Opens / closes real-time logic and math telemetry HUD console log. |
+| **`2`** or **`W`** | **colors2.0 Engine** | Selects or toggles colors2.0 Smart Rhythm engine (PLL Grid + 808 isolation). |
+| **`3`** or **`E`** | **colors1.0 Engine** | Selects or toggles colors1.0 Classic Rapid strobe engine (unconstrained raw peaks). |
+| **`5`**, **`O`**, or **`Z`** | **Toggle Solid Color Light** | Toggles between ambient room illumination and music-reactive strobing. |
 | **`1`** or **`Q`** | **Toggle Bass Only Mode** | Toggles pure bass strobe (only reacts to kicks, 808s, and sub-bass). |
-| **`2`** or **`W`** | **Toggle Engine (Smart vs Classic)** | Toggles between Smart Rhythm (PLL Grid) and Classic Raw strobe engines. |
-| **`3`** or **`E`** | **Toggle Classic Rapid Strobe** | Toggles Classic Rapid Strobe mode (unconstrained raw peak triggering). |
 | **`4`** or **`R`** | **Toggle Red Only Mode** | Toggles pure crimson red strobe flashes on all beats. |
 | **`A`** | **Toggle Album Art Mode** | Toggles strobe mode & palette sync to currently playing album cover art. |
 | **`X`** | **Toggle CRAZY OVERDRIVE** | Instantly toggles Crazy Overdrive strobe on/off. |
@@ -201,15 +157,15 @@ Beat Strobe includes a dedicated static lighting system that transforms displays
 | **`L`** | **Toggle Room Lights** | Toggles Bluetooth BLE room light strip synchronization (HappyLighting). |
 | **`K`** | **Toggle Legion PC RGB** | Toggles Lenovo Legion gaming desktop PC RGB lighting. |
 | **`N`** | **Bluetooth Sync Modal** | Opens the Multi-Computer Host & Client sync panel. |
-| **`F`** or **`F11`** | **Display Mode** | Cycles: Dual Monitor Fullscreen $\to$ Monitor 1 $\to$ Monitor 2 $\to$ Windowed. |
-| **`B`** | **Dual FX Scheme** | Cycles: Dual Synced $\to$ Ping-Pong Alternating $\to$ Complementary Contrast $\to$ Panoramic. |
+| **`F`** or **`F11`** | **Display Mode** | Cycles: Dual Monitor Fullscreen to Monitor 1 to Monitor 2 to Windowed. |
+| **`B`** | **Dual FX Scheme** | Cycles: Dual Synced to Ping-Pong Alternating to Complementary Contrast to Panoramic. |
 | **`H`** or **`TAB`** | **Toggle HUD** | Shows or hides the control overlay (HUD auto-fades after 3.5s of mouse inactivity). |
-| **`M`** | **Cycle Strobe Mode** | Cycles through strobe modes (including [BASS] Bass Only and [ALBUM] Cover Art). |
+| **`M`** | **Cycle Strobe Mode** | Cycles through strobe modes. |
 | **`P`** | **Cycle Palette / Solid Color** | Cycles palettes in music mode, or cycles solid colors when solid lighting is active. |
-| **`V`** | **Cycle Visual Style** | Solid Fullscreen $\leftrightarrow$ Radial Shockwave $\leftrightarrow$ Horizon Pulse. |
+| **`V`** | **Cycle Visual Style** | Solid Fullscreen to Radial Shockwave to Horizon Pulse. |
 | **`D`** | **Switch Audio Source** | Cycles between System Audio Loopback, Monitors, and Microphones. |
 | **`S`** | **Safe Mode Toggle** | Toggles gentle pulsing glow vs intense hard strobe. |
-| **`T`** | **Demo Mode Toggle** | Synthesizes a 128 BPM electronic beat to test visuals without music. |
+| **`T`** | **Demo Mode Toggle** | Synthesizes an electronic beat to test visuals without music. |
 | **`UP` / `DOWN`** | **Sensitivity** | Increases or decreases beat detection sensitivity. |
 | **`[` / `]`** or **`PgUp` / `PgDn`** | **Pre-Amp Boost** | Adjusts input AGC gain multiplier (0.5x to 8.0x) for soft/loud audio sources. |
 | **`RIGHT` / `LEFT`** | **Decay Speed** | Adjusts how fast flashes fade out (snappy strobe vs lingering rave glow). |

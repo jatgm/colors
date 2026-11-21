@@ -22,6 +22,36 @@ except ImportError:
 RAZER_VID = 0x1532
 CONTROL_FEATURE_LEN = 91
 
+# Known Razer Mouse Product IDs for reliable hardware classification
+RAZER_MOUSE_PIDS = {
+    0x0078,  # Razer Viper (Wired)
+    0x007A,  # Razer Viper Ultimate (Wired)
+    0x007B,  # Razer Viper Ultimate (Wireless)
+    0x008A,  # Razer Viper Mini
+    0x0091,  # Razer Viper 8KHz
+    0x00A5,  # Razer Viper V2 Pro (Wired)
+    0x00A6,  # Razer Viper V2 Pro (Wireless)
+    0x0043,  # DeathAdder Chroma
+    0x0054,  # DeathAdder Elite
+    0x0070,  # DeathAdder Essential
+    0x0071,  # DeathAdder Essential (White)
+    0x0084,  # DeathAdder V2
+    0x0085,  # DeathAdder V2 Pro (Wired)
+    0x0086,  # DeathAdder V2 Pro (Wireless)
+    0x00B6,  # DeathAdder V3 Pro (Wired)
+    0x00B7,  # DeathAdder V3 Pro (Wireless)
+    0x0064,  # Basilisk
+    0x0083,  # Basilisk V2
+    0x0088,  # Basilisk V3
+    0x0099,  # Basilisk V3 Pro
+    0x0053,  # Naga Chroma
+    0x0067,  # Naga Trinity
+    0x0096,  # Cobra
+    0x00A3,  # Cobra Pro
+    0x0045,  # Mamba Chroma
+    0x0072,  # Mamba Elite
+}
+
 
 def _create_razer_report(command_class, command_id, data_size, arguments, txn=0x3F):
     """Generate 90-byte Razer control report with XOR checksum."""
@@ -222,6 +252,14 @@ class KeyboardMatrixEngine:
                         cur[:, i] = np.clip(cur[:, i] + sw["color"][i] * crest_int, 0, 255)
                     self.matrix[1:][mask] = cur.astype(np.uint8)
 
+                # Epicenter spacebar white-hot detonation flare
+                if sw["radius"] < 3.5:
+                    space_int = max(0.0, 1.0 - sw["radius"] / 3.5) * sw["intensity"]
+                    sp_slice = self.matrix[5, 6:11].astype(np.float32)
+                    for i in range(3):
+                        sp_slice[:, i] = np.clip(sp_slice[:, i] + 255.0 * space_int * 0.70 + sw["color"][i] * space_int, 0, 255)
+                    self.matrix[5, 6:11] = sp_slice.astype(np.uint8)
+
                 # Trailing afterglow
                 trail_mask = (self.D_radial[1:] < sw["radius"]) & (~mask)
                 if np.any(trail_mask):
@@ -414,9 +452,9 @@ class RazerChromaManager:
                     self.hid.HidD_GetProductString(h, prod_buf, 256)
                     p_name = prod_buf.value.strip() or f"Razer Device (0x{attrs.ProductID:04X})"
 
-                    # Classify device type
+                    # Classify device type with explicit PID lookup for Razer Viper and Chroma mice
                     lower_name = p_name.lower()
-                    if any(k in lower_name for k in ("mouse", "viper", "deathadder", "basilisk", "naga", "cobra", "mamba")):
+                    if (attrs.ProductID in RAZER_MOUSE_PIDS) or any(k in lower_name for k in ("mouse", "viper", "deathadder", "basilisk", "naga", "cobra", "mamba")):
                         dev_type = "mouse"
                     elif any(k in lower_name for k in ("keyboard", "ornata", "blackwidow", "huntsman", "cynosa", "deathstalker")):
                         dev_type = "keyboard"
@@ -428,8 +466,11 @@ class RazerChromaManager:
                         dev_type = "peripheral"
 
                     dev_obj = RazerDevice(p_name, dev_type, path, attrs.ProductID, h)
-                    if attrs.ProductID == 0x0078:
-                        dev_obj.has_scroll_wheel = False
+                    if dev_type == "mouse":
+                        dev_obj.led_id = 0x04  # LOGO_LED (0x04) is primary mouse chassis illumination
+                        if attrs.ProductID == 0x0078:
+                            # Razer Viper (Wired): single chassis logo LED zone
+                            dev_obj.has_scroll_wheel = False
                     found.append(dev_obj)
                 else:
                     self.kernel32.CloseHandle(h)
@@ -472,16 +513,20 @@ class RazerChromaManager:
         cbuf_kbd_bright = (ctypes.c_char * 91).from_buffer(buf_kbd_bright)
 
         # Mouse logo brightness (0x0F, 0x04, 0x03) with txn 0x3F (LOGO_LED = 0x04)
-        rep_mouse_bright = _create_razer_report(0x0F, 0x04, 0x03, [0x01, 0x04, 0xFF], txn=0x3F)
-        buf_mouse_bright = bytearray(91); buf_mouse_bright[1:] = rep_mouse_bright
-        cbuf_mouse_bright = (ctypes.c_char * 91).from_buffer(buf_mouse_bright)
+        rep_mouse_bright_vol = _create_razer_report(0x0F, 0x04, 0x03, [0x01, 0x04, 0xFF], txn=0x3F)
+        buf_mouse_bright_vol = bytearray(91); buf_mouse_bright_vol[1:] = rep_mouse_bright_vol
+        cbuf_mouse_bright_vol = (ctypes.c_char * 91).from_buffer(buf_mouse_bright_vol)
+
+        rep_mouse_bright_nonvol = _create_razer_report(0x0F, 0x04, 0x03, [0x00, 0x04, 0xFF], txn=0x3F)
+        buf_mouse_bright_nonvol = bytearray(91); buf_mouse_bright_nonvol[1:] = rep_mouse_bright_nonvol
+        cbuf_mouse_bright_nonvol = (ctypes.c_char * 91).from_buffer(buf_mouse_bright_nonvol)
 
         # Mouse scroll wheel brightness (0x0F, 0x04, 0x03) with txn 0x3F (SCROLL_WHEEL_LED = 0x01)
         rep_sw_bright = _create_razer_report(0x0F, 0x04, 0x03, [0x01, 0x01, 0xFF], txn=0x3F)
         buf_sw_bright = bytearray(91); buf_sw_bright[1:] = rep_sw_bright
         cbuf_sw_bright = (ctypes.c_char * 91).from_buffer(buf_sw_bright)
 
-        # Legacy fallback brightness
+        # Legacy and standard brightness fallbacks
         rep_leg_bright = _create_razer_report(0x03, 0x03, 0x03, [0x00, 0x00, 0xFF], txn=0x3F)
         buf_leg_bright = bytearray(91); buf_leg_bright[1:] = rep_leg_bright
         cbuf_leg_bright = (ctypes.c_char * 91).from_buffer(buf_leg_bright)
@@ -496,9 +541,13 @@ class RazerChromaManager:
         buf_black_mouse = bytearray(91); buf_black_mouse[1:] = rep_black_mouse
         cbuf_black_mouse = (ctypes.c_char * 91).from_buffer(buf_black_mouse)
 
-        rep_mouse_static_black = _create_razer_report(0x0F, 0x02, 0x09, [0x00, 0x04, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x3F)
-        buf_mouse_static_black = bytearray(91); buf_mouse_static_black[1:] = rep_mouse_static_black
-        cbuf_mouse_static_black = (ctypes.c_char * 91).from_buffer(buf_mouse_static_black)
+        rep_mouse_static_black_vol = _create_razer_report(0x0F, 0x02, 0x09, [0x01, 0x04, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x3F)
+        buf_mouse_static_black_vol = bytearray(91); buf_mouse_static_black_vol[1:] = rep_mouse_static_black_vol
+        cbuf_mouse_static_black_vol = (ctypes.c_char * 91).from_buffer(buf_mouse_static_black_vol)
+
+        rep_mouse_static_black_nonvol = _create_razer_report(0x0F, 0x02, 0x09, [0x00, 0x04, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x3F)
+        buf_mouse_static_black_nonvol = bytearray(91); buf_mouse_static_black_nonvol[1:] = rep_mouse_static_black_nonvol
+        cbuf_mouse_static_black_nonvol = (ctypes.c_char * 91).from_buffer(buf_mouse_static_black_nonvol)
 
         rep_black_sw = _create_razer_report(0x0F, 0x02, 0x06, [0x00, 0x01, 0x00, 0x00, 0x00, 0x00], txn=0x3F)
         buf_black_sw = bytearray(91); buf_black_sw[1:] = rep_black_sw
@@ -519,8 +568,10 @@ class RazerChromaManager:
                     self.hid.HidD_SetFeature(dev.handle, cbuf_kbd_bright, 91)
                     self.hid.HidD_SetFeature(dev.handle, cbuf_black_kbd, 91)
                 elif dev.device_type == "mouse":
-                    self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_bright, 91)
-                    self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_static_black, 91)
+                    self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_bright_vol, 91)
+                    self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_bright_nonvol, 91)
+                    self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_static_black_vol, 91)
+                    self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_static_black_nonvol, 91)
                     self.hid.HidD_SetFeature(dev.handle, cbuf_black_mouse, 91)
                     if dev.pid == 0x0078:
                         dev.has_scroll_wheel = False
@@ -613,18 +664,26 @@ class RazerChromaManager:
 
         # Pre-allocate mouse static blackout command (0x0F, 0x02, 0x09) on LOGO (0x04)
         # Prevents mouse firmware from reverting to onboard profile (breathing/rainbow)
-        buf_mouse_static_black = bytearray(91)
-        buf_mouse_static_black[1:] = _create_razer_report(0x0F, 0x02, 0x09, [0x00, 0x04, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x3F)
-        cbuf_mouse_static_black = (ctypes.c_char * 91).from_buffer(buf_mouse_static_black)
+        buf_mouse_static_black_vol = bytearray(91)
+        buf_mouse_static_black_vol[1:] = _create_razer_report(0x0F, 0x02, 0x09, [0x01, 0x04, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x3F)
+        cbuf_mouse_static_black_vol = (ctypes.c_char * 91).from_buffer(buf_mouse_static_black_vol)
+
+        buf_mouse_static_black_nonvol = bytearray(91)
+        buf_mouse_static_black_nonvol[1:] = _create_razer_report(0x0F, 0x02, 0x09, [0x00, 0x04, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x3F)
+        cbuf_mouse_static_black_nonvol = (ctypes.c_char * 91).from_buffer(buf_mouse_static_black_nonvol)
+
+        cbuf_mouse_static_black = cbuf_mouse_static_black_vol
 
         buf_sw_off = bytearray(91)
         buf_sw_off[1:] = _create_razer_report(0x0F, 0x02, 0x06, [0x00, 0x01, 0x00, 0x00, 0x00, 0x00], txn=0x3F)
         cbuf_sw_off = (ctypes.c_char * 91).from_buffer(buf_sw_off)
 
         # Pre-allocate mouse scroll wheel static blackout command (0x0F, 0x02, 0x09) on SCROLL (0x01)
-        buf_sw_static_black = bytearray(91)
-        buf_sw_static_black[1:] = _create_razer_report(0x0F, 0x02, 0x09, [0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x3F)
-        cbuf_sw_static_black = (ctypes.c_char * 91).from_buffer(buf_sw_static_black)
+        buf_sw_static_black_vol = bytearray(91)
+        buf_sw_static_black_vol[1:] = _create_razer_report(0x0F, 0x02, 0x09, [0x01, 0x01, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x3F)
+        cbuf_sw_static_black_vol = (ctypes.c_char * 91).from_buffer(buf_sw_static_black_vol)
+
+        buf_sw_static_black = buf_sw_static_black_vol
 
         # Pre-allocate 6 matrix row buffers with zero runtime memory allocations
         row_bufs = []
@@ -643,8 +702,13 @@ class RazerChromaManager:
             cbuf_rows.append((ctypes.c_char * 91).from_buffer(buf))
 
         # Pre-allocate mouse logo and scroll wheel illuminated buffers
-        buf_mouse_logo = bytearray(91)
-        cbuf_mouse_logo = (ctypes.c_char * 91).from_buffer(buf_mouse_logo)
+        buf_mouse_logo_vol = bytearray(91)
+        cbuf_mouse_logo_vol = (ctypes.c_char * 91).from_buffer(buf_mouse_logo_vol)
+        buf_mouse_logo_nonvol = bytearray(91)
+        cbuf_mouse_logo_nonvol = (ctypes.c_char * 91).from_buffer(buf_mouse_logo_nonvol)
+        buf_mouse_logo = buf_mouse_logo_vol
+        cbuf_mouse_logo = cbuf_mouse_logo_vol
+
         buf_sw = bytearray(91)
         cbuf_sw = (ctypes.c_char * 91).from_buffer(buf_sw)
 
@@ -697,7 +761,43 @@ class RazerChromaManager:
             if not devs or not self.enabled:
                 continue
 
-            # 1. Update Keyboard Matrix (Per-key / per-row dynamic lighting)
+            # 1. Update Mouse Peripherals immediately (zero latency, volatile VARSTORE + non-volatile reports)
+            m_col = b_right if max(b_right) > 0 else b_left
+            is_mouse_blackout = (max(m_col) == 0)
+            for dev in devs:
+                if dev.device_type != "mouse":
+                    continue
+                try:
+                    if is_mouse_blackout:
+                        if not was_mouse_blackout:
+                            self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_static_black_vol, 91)
+                            self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_static_black_nonvol, 91)
+                            self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_off, 91)
+                            if getattr(dev, "has_scroll_wheel", False):
+                                self.hid.HidD_SetFeature(dev.handle, cbuf_sw_static_black_vol, 91)
+                                self.hid.HidD_SetFeature(dev.handle, cbuf_sw_off, 91)
+                            was_mouse_blackout = True
+                            last_sent_mouse_color = (0, 0, 0)
+                    else:
+                        was_mouse_blackout = False
+                        if m_col != last_sent_mouse_color:
+                            last_sent_mouse_color = m_col
+                            rep_ml_vol = _create_razer_report(0x0F, 0x02, 0x09, [0x01, 0x04, 0x01, 0x00, 0x00, 0x01, m_col[0], m_col[1], m_col[2]], txn=0x3F)
+                            buf_mouse_logo_vol[1:] = rep_ml_vol
+                            self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_logo_vol, 91)
+
+                            rep_ml_nonvol = _create_razer_report(0x0F, 0x02, 0x09, [0x00, 0x04, 0x01, 0x00, 0x00, 0x01, m_col[0], m_col[1], m_col[2]], txn=0x3F)
+                            buf_mouse_logo_nonvol[1:] = rep_ml_nonvol
+                            self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_logo_nonvol, 91)
+
+                            if getattr(dev, "has_scroll_wheel", False):
+                                rep_sw = _create_razer_report(0x0F, 0x02, 0x09, [0x01, 0x01, 0x01, 0x00, 0x00, 0x01, m_col[0], m_col[1], m_col[2]], txn=0x3F)
+                                buf_sw[1:] = rep_sw
+                                self.hid.HidD_SetFeature(dev.handle, cbuf_sw, 91)
+                except Exception:
+                    pass
+
+            # 2. Update Keyboard Matrix (Per-key / per-row dynamic lighting)
             has_keyboard = any(d.device_type == "keyboard" for d in devs)
             if has_keyboard:
                 matrix, is_kbd_blackout = self.matrix_engine.generate_matrix(
@@ -733,43 +833,20 @@ class RazerChromaManager:
                     except Exception:
                         pass
 
-            # 2. Update Mouse & Other Peripherals
-            is_mouse_blackout = (b_right == (0, 0, 0))
+            # 3. Update Other Peripherals (Mousepads / Headsets)
             for dev in devs:
-                if dev.device_type == "keyboard":
+                if dev.device_type in ("keyboard", "mouse"):
                     continue
                 try:
-                    if dev.device_type == "mouse":
-                        if is_mouse_blackout:
-                            if not was_mouse_blackout:
-                                self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_static_black, 91)
-                                self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_off, 91)
-                                if getattr(dev, "has_scroll_wheel", False):
-                                    self.hid.HidD_SetFeature(dev.handle, cbuf_sw_static_black, 91)
-                                    self.hid.HidD_SetFeature(dev.handle, cbuf_sw_off, 91)
-                                was_mouse_blackout = True
-                                last_sent_mouse_color = (0, 0, 0)
-                        else:
-                            was_mouse_blackout = False
-                            if b_right != last_sent_mouse_color:
-                                last_sent_mouse_color = b_right
-                                rep_ml = _create_razer_report(0x0F, 0x02, 0x09, [0x00, 0x04, 0x01, 0x00, 0x00, 0x01, b_right[0], b_right[1], b_right[2]], txn=0x3F)
-                                buf_mouse_logo[1:] = rep_ml
-                                self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_logo, 91)
-
-                                if getattr(dev, "has_scroll_wheel", False):
-                                    rep_sw = _create_razer_report(0x0F, 0x02, 0x09, [0x00, 0x01, 0x01, 0x00, 0x00, 0x01, b_right[0], b_right[1], b_right[2]], txn=0x3F)
-                                    buf_sw[1:] = rep_sw
-                                    self.hid.HidD_SetFeature(dev.handle, cbuf_sw, 91)
+                    if is_kbd_blackout:
+                        self.hid.HidD_SetFeature(dev.handle, cbuf_kbd_off, 91)
                     else:
-                        # Mousepad / Headset generic fallback
-                        if is_kbd_blackout:
-                            self.hid.HidD_SetFeature(dev.handle, cbuf_kbd_off, 91)
-                        else:
-                            args_gen = bytearray([0x00, getattr(dev, "led_id", 0x05), 0x01, 0x00, 0x00, 0x01, b_left[0], b_left[1], b_left[2]])
-                            rep_gen = _create_razer_report(0x0F, 0x02, 0x09, args_gen, txn=0x3F)
-                            buf_gen = bytearray(91); buf_gen[1:] = rep_gen
-                            self.hid.HidD_SetFeature(dev.handle, (ctypes.c_char * 91).from_buffer(buf_gen), 91)
+                        args_gen = bytearray([0x01, getattr(dev, "led_id", 0x05), 0x01, 0x00, 0x00, 0x01, b_left[0], b_left[1], b_left[2]])
+                        rep_gen = _create_razer_report(0x0F, 0x02, 0x09, args_gen, txn=0x3F)
+                        buf_gen = bytearray(91); buf_gen[1:] = rep_gen
+                        self.hid.HidD_SetFeature(dev.handle, (ctypes.c_char * 91).from_buffer(buf_gen), 91)
+                except Exception:
+                    pass
                 except Exception:
                     pass
 
@@ -798,6 +875,10 @@ class RazerChromaManager:
                     if self.hid:
                         # Turn off LEDs cleanly with STATIC BLACK and EFFECT_NONE
                         txn_off = 0x1F if d.device_type == "keyboard" else 0x3F
+                        rep_sblack_vol = _create_razer_report(0x0F, 0x02, 0x09, [0x01, getattr(d, 'led_id', 0x04), 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=txn_off)
+                        buf_sblack_vol = bytearray(91); buf_sblack_vol[1:] = rep_sblack_vol
+                        self.hid.HidD_SetFeature(d.handle, (ctypes.c_char * 91).from_buffer(buf_sblack_vol), 91)
+
                         rep_sblack = _create_razer_report(0x0F, 0x02, 0x09, [0x00, getattr(d, 'led_id', 0x04), 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=txn_off)
                         buf_sblack = bytearray(91); buf_sblack[1:] = rep_sblack
                         self.hid.HidD_SetFeature(d.handle, (ctypes.c_char * 91).from_buffer(buf_sblack), 91)

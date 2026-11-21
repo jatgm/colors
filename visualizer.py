@@ -14,6 +14,8 @@ from config import (
     PALETTES,
     PALETTE_NAMES,
     PALETTE_ALBUM_ART,
+    MODE_COLORS_2_0,
+    MODE_COLORS_1_0,
     MODE_STROBE_2_0,
     MODE_SMART_RHYTHM,
     MODE_CLASSIC_RAPID,
@@ -168,15 +170,16 @@ class VisualizerEngine:
         self.current_color = self.palette_colors[0]
         self.secondary_color = self.palette_colors[1 % len(self.palette_colors)]
 
-    def set_mode(self, mode_name):
+    def set_mode(self, mode_name, keep_solid=False):
         if mode_name in STROBE_MODES:
             self.mode = mode_name
             self.mode_index = STROBE_MODES.index(mode_name)
-            self.solid_color_active = False
+            if not keep_solid:
+                self.solid_color_active = False
             if self.mode in (MODE_CLASSIC_RAPID, MODE_PSYCHO_OVERDRIVE):
                 self.overdrive_mode = True
                 self.decay_rate = max(24.0, self.decay_rate)
-            elif self.mode == MODE_STROBE_2_0:
+            elif self.mode in (MODE_STROBE_2_0, MODE_COLORS_2_0):
                 self.overdrive_mode = False
             elif self.mode == MODE_ALBUM_ART:
                 self.set_palette(PALETTE_ALBUM_ART)
@@ -186,25 +189,50 @@ class VisualizerEngine:
         return self.mode
 
     def is_classic_rapid_active(self):
-        """Return True if Classic Rapid Strobe mode (how it was before) is active."""
+        """Return True if Classic Rapid Strobe mode (colors1.0) is active."""
         return self.mode == MODE_CLASSIC_RAPID
 
     def is_smart_mode_active(self):
-        """Return True if Smart Rhythm detection is active."""
+        """Return True if Smart Rhythm detection (colors2.0) is active."""
         return (self.mode not in (MODE_CLASSIC_RAPID, MODE_PSYCHO_OVERDRIVE)) and not self.overdrive_mode
 
-    def toggle_classic_rapid(self):
-        """Toggle between Classic Rapid Mode (how it was before) and Smart mode."""
-        if self.is_classic_rapid_active():
-            prev_mode = getattr(self, "_prev_mode_before_classic", MODE_STROBE_2_0)
-            if prev_mode == MODE_CLASSIC_RAPID:
-                prev_mode = MODE_STROBE_2_0
-            self.set_mode(prev_mode)
-            return False
+    def is_colors_2_0_active(self):
+        """Return True if colors2.0 engine is active."""
+        return self.is_smart_mode_active()
+
+    def is_colors_1_0_active(self):
+        """Return True if colors1.0 engine is active."""
+        return self.is_classic_rapid_active()
+
+    def get_active_engine_name(self):
+        """Return prominent engine identifier: 'colors2.0' or 'colors1.0'."""
+        return "colors2.0" if self.is_smart_mode_active() else "colors1.0"
+
+    def set_engine(self, engine_name):
+        """Explicitly switch detection engine between colors2.0 and colors1.0 without affecting light mode."""
+        was_solid = self.solid_color_active
+        if engine_name in ("colors1.0", MODE_COLORS_1_0, "classic", "1.0"):
+            self.set_mode(MODE_COLORS_1_0, keep_solid=True)
         else:
-            self._prev_mode_before_classic = self.mode if self.mode != MODE_CLASSIC_RAPID else MODE_STROBE_2_0
-            self.set_mode(MODE_CLASSIC_RAPID)
-            return True
+            self.set_mode(MODE_COLORS_2_0, keep_solid=True)
+        self.solid_color_active = was_solid
+        return self.get_active_engine_name()
+
+    def toggle_classic_rapid(self):
+        """Toggle between Classic Rapid Mode (colors1.0) and Smart mode (colors2.0) without affecting light mode."""
+        was_solid = self.solid_color_active
+        if self.is_classic_rapid_active():
+            prev_mode = getattr(self, "_prev_mode_before_classic", MODE_COLORS_2_0)
+            if prev_mode == MODE_CLASSIC_RAPID:
+                prev_mode = MODE_COLORS_2_0
+            self.set_mode(prev_mode, keep_solid=True)
+            res = False
+        else:
+            self._prev_mode_before_classic = self.mode if self.mode != MODE_CLASSIC_RAPID else MODE_COLORS_2_0
+            self.set_mode(MODE_CLASSIC_RAPID, keep_solid=True)
+            res = True
+        self.solid_color_active = was_solid
+        return res
 
     def is_solid_color_active(self):
         """Return True if static solid color override lighting is currently active."""
@@ -310,25 +338,36 @@ class VisualizerEngine:
             return True
 
     def toggle_engine(self):
-        """Toggle active detection engine between Smart PLL and Classic Raw."""
-        return self.toggle_mode_2_0()
+        """Toggle active detection engine between colors2.0 (Smart PLL) and colors1.0 (Classic Raw) without affecting light mode."""
+        was_solid = self.solid_color_active
+        if self.is_classic_rapid_active():
+            self.set_mode(MODE_COLORS_2_0, keep_solid=True)
+            res = True
+        else:
+            self.set_mode(MODE_COLORS_1_0, keep_solid=True)
+            res = False
+        self.solid_color_active = was_solid
+        return res
 
     def toggle_smart_mode(self):
-        """Toggle Smart Rhythm mode / engine."""
+        """Toggle Smart Rhythm mode / engine (colors2.0)."""
         return self.toggle_engine()
 
     def toggle_mode_2_0(self):
-        """Toggle between Mode 2.0 (Smart Sync) and previous mode."""
+        """Toggle between colors2.0 and previous mode / colors1.0 without affecting light mode."""
+        was_solid = self.solid_color_active
         if self.is_mode_2_0_active():
             prev_mode = getattr(self, "_prev_mode_before_2_0", MODE_CLASSIC_RAPID)
-            if prev_mode == MODE_STROBE_2_0:
+            if prev_mode in (MODE_STROBE_2_0, MODE_COLORS_2_0):
                 prev_mode = MODE_CLASSIC_RAPID
-            self.set_mode(prev_mode)
-            return False
+            self.set_mode(prev_mode, keep_solid=True)
+            res = False
         else:
-            self._prev_mode_before_2_0 = self.mode if self.mode != MODE_STROBE_2_0 else MODE_CLASSIC_RAPID
-            self.set_mode(MODE_STROBE_2_0)
-            return True
+            self._prev_mode_before_2_0 = self.mode if self.mode not in (MODE_STROBE_2_0, MODE_COLORS_2_0) else MODE_CLASSIC_RAPID
+            self.set_mode(MODE_COLORS_2_0, keep_solid=True)
+            res = True
+        self.solid_color_active = was_solid
+        return res
 
     def toggle_album_art_mode(self):
         """Toggle between Album Art Mode/Palette and previous strobe mode/palette."""

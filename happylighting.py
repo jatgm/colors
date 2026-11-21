@@ -1,6 +1,6 @@
 """
 HappyLighting / QHM Bluetooth Low Energy (BLE) Room Lights Manager.
-Provides non-blocking, zero-latency synchronization between the Beat Strobe
+Provides non-blocking, zero-latency synchronization between the colors
 Visualizer Engine and HappyLighting-compatible Bluetooth LED strip lights
 (KSIPZE ST51_K2430, QHM-S082, Triones controllers).
 """
@@ -280,30 +280,45 @@ class HappyLightingManager:
                     last_write_time = time.perf_counter()
                     flash_end_time = 0.0
 
-                    # 4. Active streaming loop
+                    # 4. Active streaming loop with zero jitter and pending queue bypass
                     while self.running and client.is_connected:
                         now = time.perf_counter()
 
-                        # Determine timeout until next strobe cut or event
-                        wait_timeout = 0.050
-                        if flash_end_time > now:
-                            wait_timeout = max(0.002, flash_end_time - now)
-
-                        try:
-                            await asyncio.wait_for(self._event.wait(), timeout=wait_timeout)
-                            self._event.clear()
-                        except asyncio.TimeoutError:
-                            pass
-
-                        if not self.running or not client.is_connected:
-                            break
-
-                        now = time.perf_counter()
-
+                        # First check if there is an immediate pending command before sleeping
                         with self.lock:
                             target_color = self._target_color
                             target_strobe = self._target_strobe
                             flash_id = self._flash_trigger_id
+
+                        has_pending = False
+                        if target_strobe and target_color != (0, 0, 0) and flash_id != last_handled_flash_id:
+                            has_pending = True
+                        elif target_strobe and flash_end_time > 0 and now >= flash_end_time:
+                            has_pending = True
+                        elif target_color == (0, 0, 0) and last_sent_color != (0, 0, 0):
+                            has_pending = True
+                        elif not target_strobe and target_color != last_sent_color and (now - last_write_time >= 0.020):
+                            has_pending = True
+
+                        if not has_pending:
+                            wait_timeout = 0.030
+                            if flash_end_time > now:
+                                wait_timeout = max(0.002, flash_end_time - now)
+
+                            self._event.clear()
+                            try:
+                                await asyncio.wait_for(self._event.wait(), timeout=wait_timeout)
+                            except asyncio.TimeoutError:
+                                pass
+
+                            if not self.running or not client.is_connected:
+                                break
+                            now = time.perf_counter()
+
+                            with self.lock:
+                                target_color = self._target_color
+                                target_strobe = self._target_strobe
+                                flash_id = self._flash_trigger_id
 
                         to_send = None
 
@@ -326,15 +341,15 @@ class HappyLightingManager:
 
                         # Check 4: Smooth rave mode or ambient color returned between beat flashes
                         elif not target_strobe:
-                            if target_color != last_sent_color and (now - last_write_time >= 0.025):
+                            if target_color != last_sent_color and (now - last_write_time >= 0.020):
                                 to_send = target_color
                                 flash_end_time = 0.0
 
                         if to_send is not None:
                             # BLE HCI pacing: prevent packet collisions / buffer overflow
                             elapsed = now - last_write_time
-                            if elapsed < 0.012:
-                                await asyncio.sleep(0.012 - elapsed)
+                            if elapsed < 0.010:
+                                await asyncio.sleep(0.010 - elapsed)
 
                             pkt = make_pkt(to_send[0], to_send[1], to_send[2])
                             try:
@@ -345,7 +360,7 @@ class HappyLightingManager:
                                 _LOGGER.debug("BLE write transient error: %s", write_err)
                                 if not client.is_connected:
                                     break
-                                await asyncio.sleep(0.020)
+                                await asyncio.sleep(0.015)
 
             except Exception as conn_err:
                 _LOGGER.debug("BLE connection loop error: %s", conn_err)

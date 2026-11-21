@@ -18,6 +18,8 @@ from config import (
     DEFAULT_PREAMP_GAIN,
     MIN_PREAMP_GAIN,
     MAX_PREAMP_GAIN,
+    MODE_COLORS_2_0,
+    MODE_COLORS_1_0,
     MODE_STROBE_2_0,
     MODE_CLASSIC_RAPID,
     MODE_RED_ONLY,
@@ -88,6 +90,13 @@ class HUD:
         self.dropdown_menu_rect = None
         self.hover_dropdown_item_idx = -1
 
+        # Real-time logic & math telemetry console
+        self.show_console = False
+        self.badge_engine = None
+        self.btn_console = None
+        self.console_close_btn = None
+        self.console_rect = None
+
         self._build_layout()
 
     def resize(self, width, height, active_mon_rect=None):
@@ -119,6 +128,10 @@ class HUD:
     def toggle_sync_modal(self):
         self.open_dropdown = None
         self.show_sync_modal = not self.show_sync_modal
+        self.notify_interaction()
+
+    def toggle_console(self):
+        self.show_console = not self.show_console
         self.notify_interaction()
 
     def handle_text_input(self, event, sync_mgr):
@@ -390,6 +403,12 @@ class HUD:
 
             return True
 
+        # Real-time logic & math telemetry console interaction (functional even when HUD panel is hidden)
+        if self.show_console and hasattr(self, "console_rect") and self.console_rect and self.console_rect.collidepoint(pos):
+            if hasattr(self, "console_close_btn") and self.console_close_btn and self.console_close_btn.collidepoint(pos):
+                self.show_console = False
+            return True
+
         if not self.visible or self.alpha < 30:
             return False
 
@@ -452,6 +471,17 @@ class HUD:
 
             # 4. Otherwise, clicking outside closes the dropdown
             self.open_dropdown = None
+
+        # -----------------------------------------------------------------
+        # Header Controls: Obvious Engine Badge & Real-Time Console Log
+        # -----------------------------------------------------------------
+        if hasattr(self, "badge_engine") and self.badge_engine and self.badge_engine.collidepoint(pos):
+            if visualizer:
+                visualizer.toggle_engine()
+            return True
+        elif hasattr(self, "btn_console") and self.btn_console and self.btn_console.collidepoint(pos):
+            self.toggle_console()
+            return True
 
         # -----------------------------------------------------------------
         # 1. Waveform Progress Bar Deck Interactive Seeking
@@ -532,7 +562,7 @@ class HUD:
         # -----------------------------------------------------------------
         if (hasattr(self, "btn_engine") and self.btn_engine.collidepoint(pos)) or (hasattr(self, "btn_mode_2_0") and self.btn_mode_2_0.collidepoint(pos)):
             if visualizer:
-                visualizer.toggle_mode_2_0()
+                visualizer.toggle_engine()
             return True
         elif hasattr(self, "btn_album_art") and self.btn_album_art.collidepoint(pos):
             if visualizer:
@@ -632,6 +662,8 @@ class HUD:
             return
 
         if self.alpha <= 1.0:
+            if self.show_console:
+                self._render_console_log(screen, audio_state, visualizer, audio_mgr)
             return
 
         alpha_int = int(self.alpha)
@@ -642,48 +674,22 @@ class HUD:
         panel_bg = (10, 14, 24, min(238, alpha_int))
         pygame.draw.rect(hud_surf, panel_bg, panel, border_radius=6)
 
-        # Dynamic Accent Color & Active Mode Pill
+        # Dynamic Accent Color
+        is_c1 = visualizer.is_colors_1_0_active() if hasattr(visualizer, "is_colors_1_0_active") else False
+        is_c2 = visualizer.is_colors_2_0_active() if hasattr(visualizer, "is_colors_2_0_active") else True
+
         if getattr(visualizer, "solid_color_active", False):
             accent_col = (255, 205, 50)
-            c_name = visualizer.get_solid_color_name() if hasattr(visualizer, "get_solid_color_name") else "SOLID"
-            pill_text = f"SOLID: {c_name.upper()}"
-            pill_col = (255, 215, 70)
-            pill_bg = (44, 34, 14)
         elif visualizer.is_album_art_active():
             accent_col = (0, 240, 255)
-            pill_text = "ALBUM ART SYNC"
-            pill_col = (0, 240, 255)
-            pill_bg = (12, 38, 52)
-        elif visualizer.mode == MODE_CLASSIC_RAPID:
-            accent_col = (255, 140, 20)
-            pill_text = "CLASSIC RAW"
-            pill_col = (255, 140, 20)
-            pill_bg = (48, 24, 12)
-        elif visualizer.is_mode_2_0_active() or (hasattr(visualizer, "is_smart_mode_active") and visualizer.is_smart_mode_active()):
-            accent_col = (0, 240, 255)
-            pill_text = "SMART PLL"
-            pill_col = (0, 240, 255)
-            pill_bg = (12, 38, 52)
-        elif visualizer.mode == MODE_RED_ONLY:
-            accent_col = (255, 30, 45)
-            pill_text = "RED ONLY"
-            pill_col = (255, 50, 65)
-            pill_bg = (45, 12, 18)
         elif visualizer.overdrive_mode:
             accent_col = (255, 60, 45)
-            pill_text = "OVERDRIVE"
-            pill_col = (255, 80, 60)
-            pill_bg = (45, 16, 20)
         elif visualizer.safe_mode:
             accent_col = (0, 240, 150)
-            pill_text = "SAFE GLOW"
-            pill_col = (80, 240, 160)
-            pill_bg = (12, 42, 26)
+        elif is_c1:
+            accent_col = (255, 140, 20)
         else:
-            accent_col = (0, 230, 255)
-            pill_text = "ACTIVE"
-            pill_col = (100, 230, 255)
-            pill_bg = (14, 28, 44)
+            accent_col = (0, 240, 255)
 
         # Draw Frame & Corner Brackets (clamped within rect bounds)
         frame_col = (*accent_col, min(140, alpha_int))
@@ -697,19 +703,66 @@ class HUD:
         hud_surf.blit(header_surf, (panel.x, panel.y))
         pygame.draw.line(hud_surf, (*accent_col, min(50, alpha_int)), (panel.x + 8, panel.y + header_h), (panel.right - 8, panel.y + header_h))
 
-        # Title: BEAT STROBE
-        t_surf = self.font_title.render("BEAT STROBE", True, (240, 245, 255))
+        # Title: colors
+        t_surf = self.font_title.render("colors", True, (240, 245, 255))
         hud_surf.blit(t_surf, (panel.x + 14, panel.y + 10))
 
-        # Active Mode Pill
-        pill_w = self.font_tiny.size(pill_text)[0] + 12
-        pill_rect = pygame.Rect(panel.x + 14 + t_surf.get_width() + 10, panel.y + 10, pill_w, 18)
-        pygame.draw.rect(hud_surf, (*pill_bg, alpha_int), pill_rect, border_radius=3)
-        pygame.draw.rect(hud_surf, (*pill_col, min(180, alpha_int)), pill_rect, width=1, border_radius=3)
-        p_text_surf = self.font_tiny.render(pill_text, True, pill_col)
-        hud_surf.blit(p_text_surf, (pill_rect.x + 6, pill_rect.y + 2))
+        # Obvious & Prominent Engine Selection Badge (Clickable, does not affect light mode)
+        eng_name = "colors2.0" if is_c2 else "colors1.0"
+        eng_fg = (0, 240, 255) if is_c2 else (255, 140, 20)
+        eng_bg = (10, 36, 52) if is_c2 else (48, 24, 12)
+        eng_tw = self.font_tiny.size(eng_name)[0] + 16
+        self.badge_engine = pygame.Rect(panel.x + 14 + t_surf.get_width() + 10, panel.y + 10, eng_tw, 18)
+        pygame.draw.rect(hud_surf, (*eng_bg, alpha_int), self.badge_engine, border_radius=3)
+        pygame.draw.rect(hud_surf, (*eng_fg, min(220, alpha_int)), self.badge_engine, width=1, border_radius=3)
+        hud_surf.blit(self.font_tiny.render(eng_name, True, eng_fg), (self.badge_engine.x + 8, self.badge_engine.y + 2))
 
-        left_hdr_end = pill_rect.right + 14
+        cur_hdr_x = self.badge_engine.right + 8
+
+        # Dedicated Light Mode Indicator Pill (Separate, Does Not Affect or Obscure Engine Select)
+        if getattr(visualizer, "solid_color_active", False):
+            c_name = visualizer.get_solid_color_name() if hasattr(visualizer, "get_solid_color_name") else "SOLID"
+            light_text = f"LIGHT: {c_name.upper()}"
+            light_fg = (255, 215, 70)
+            light_bg = (44, 34, 14)
+            l_tw = self.font_tiny.size(light_text)[0] + 12
+            light_pill_rect = pygame.Rect(cur_hdr_x, panel.y + 10, l_tw, 18)
+            pygame.draw.rect(hud_surf, (*light_bg, alpha_int), light_pill_rect, border_radius=3)
+            pygame.draw.rect(hud_surf, (*light_fg, min(180, alpha_int)), light_pill_rect, width=1, border_radius=3)
+            hud_surf.blit(self.font_tiny.render(light_text, True, light_fg), (light_pill_rect.x + 6, light_pill_rect.y + 2))
+            cur_hdr_x = light_pill_rect.right + 8
+
+        # Status Pill for Special Visual Modes (Overdrive / Album Art / Red Only)
+        special_pill = None
+        if visualizer.overdrive_mode:
+            special_pill = ("OVERDRIVE", (255, 80, 60), (45, 16, 20))
+        elif visualizer.is_album_art_active():
+            special_pill = ("ALBUM ART", (0, 240, 255), (12, 38, 52))
+        elif visualizer.safe_mode:
+            special_pill = ("SAFE GLOW", (80, 240, 160), (12, 42, 26))
+        elif visualizer.mode == MODE_RED_ONLY:
+            special_pill = ("RED ONLY", (255, 50, 65), (45, 12, 18))
+
+        if special_pill:
+            sp_txt, sp_fg, sp_bg = special_pill
+            sp_tw = self.font_tiny.size(sp_txt)[0] + 12
+            sp_rect = pygame.Rect(cur_hdr_x, panel.y + 10, sp_tw, 18)
+            pygame.draw.rect(hud_surf, (*sp_bg, alpha_int), sp_rect, border_radius=3)
+            pygame.draw.rect(hud_surf, (*sp_fg, min(180, alpha_int)), sp_rect, width=1, border_radius=3)
+            hud_surf.blit(self.font_tiny.render(sp_txt, True, sp_fg), (sp_rect.x + 6, sp_rect.y + 2))
+            cur_hdr_x = sp_rect.right + 8
+
+        # Real-Time Telemetry & Math Console Toggle Button
+        con_text = "CONSOLE LOG [~]" if not self.show_console else "CONSOLE LOG [ACTIVE]"
+        con_fg = (0, 255, 180) if self.show_console else (140, 180, 210)
+        con_bg = (10, 48, 36) if self.show_console else (16, 24, 36)
+        con_tw = self.font_tiny.size(con_text)[0] + 14
+        self.btn_console = pygame.Rect(cur_hdr_x, panel.y + 10, con_tw, 18)
+        pygame.draw.rect(hud_surf, (*con_bg, alpha_int), self.btn_console, border_radius=3)
+        pygame.draw.rect(hud_surf, (*con_fg, min(180, alpha_int)), self.btn_console, width=1, border_radius=3)
+        hud_surf.blit(self.font_tiny.render(con_text, True, con_fg), (self.btn_console.x + 7, self.btn_console.y + 2))
+
+        left_hdr_end = self.btn_console.right + 14
 
         # Right Header Pills (Source, Hardware, Network) - anchored cleanly to left of card
         right_pills = []
@@ -1180,29 +1233,14 @@ class HUD:
         self._render_button(hud_surf, self.btn_overdrive, "Overdrive",
                             ovr_bg, ovr_border, alpha_int, has_pip=True, pip_active=ovr_active, pip_col=(255, 60, 45))
 
-        # 6.2 Active Detection Engine Indicator / Toggle (Replaces old Strobe 2.0 toggle)
-        eng_label = "ENG: SMART PLL"
-        eng_pip_col = (0, 240, 255)
-        eng_bg = (12, 36, 52)
-        eng_border = (0, 240, 255)
-
-        if visualizer and visualizer.overdrive_mode:
-            eng_label = "ENG: OVERDRIVE"
-            eng_pip_col = (255, 60, 45)
-            eng_bg = (60, 18, 22)
-            eng_border = (255, 60, 45)
-        elif visualizer and visualizer.is_solid_color_active():
-            eng_label = "ENG: SOLID"
-            eng_pip_col = (255, 200, 50)
-            eng_bg = (50, 40, 15)
-            eng_border = (255, 200, 50)
-        elif visualizer and visualizer.mode == MODE_CLASSIC_RAPID:
-            eng_label = "ENG: CLASSIC"
+        # 6.2 Active Detection Engine Indicator / Toggle
+        if visualizer and visualizer.is_colors_1_0_active():
+            eng_label = "ENG: colors1.0"
             eng_pip_col = (255, 140, 20)
             eng_bg = (48, 24, 12)
             eng_border = (255, 140, 20)
-        elif visualizer and visualizer.is_smart_mode_active():
-            eng_label = "ENG: SMART PLL"
+        else:
+            eng_label = "ENG: colors2.0"
             eng_pip_col = (0, 240, 255)
             eng_bg = (12, 36, 52)
             eng_border = (0, 240, 255)
@@ -1297,14 +1335,18 @@ class HUD:
         self._render_button(hud_surf, self.btn_sync, sync_label, sync_bg, sync_border, alpha_int)
 
         # 7. Minimal Clean Footer Navigation Strip
-        hints = "ESC Close Menu/Exit   1 Bass   2 Smart   3 Classic   X Overdrive   A Album   O Solid   P Palette   TAB Hide HUD"
+        hints = "ESC Exit/Close   ~ Console Log   2 colors2.0   3 colors1.0   X Overdrive   A Album   O Light Mode   P Palette   TAB Hide HUD"
         hint_surf = self.font_tiny.render(hints, True, (120, 138, 165))
         hud_surf.blit(hint_surf, (panel.x + (panel.width - hint_surf.get_width()) // 2, panel.bottom - 16))
 
         hud_surf.set_alpha(alpha_int)
         screen.blit(hud_surf, (0, 0))
 
-        # 8. Render Floating Dropdown Popover Menu (on top of everything)
+        # 8. Render Real-Time Logic & Math Telemetry Console
+        if self.show_console:
+            self._render_console_log(screen, audio_state, visualizer, audio_mgr)
+
+        # 9. Render Floating Dropdown Popover Menu (on top of everything)
         if self.open_dropdown is not None:
             self._render_dropdown_menu(screen, audio_mgr, visualizer, display_mgr)
 
@@ -1771,3 +1813,200 @@ class HUD:
         overlay.blit(safe_txt, (btn_safe.x + (btn_safe.width - safe_txt.get_width()) // 2, btn_safe.y + 16))
 
         screen.blit(overlay, (0, 0))
+
+    def _render_console_log(self, screen, audio_state, visualizer, audio_mgr=None):
+        """Render high-tech cyber-studio real-time logic and math telemetry console view."""
+        if not audio_state:
+            audio_state = {}
+
+        mon = self.active_mon_rect
+        c_w = min(1040, mon.width - 32)
+        c_h = min(360, max(250, mon.height - 320))
+        c_x = mon.x + (mon.width - c_w) // 2
+
+        # If main HUD is visible and non-zero alpha, dock above panel, else anchor at lower bottom
+        if self.alpha > 20.0 and hasattr(self, "panel_rect"):
+            c_y = max(mon.y + 12, self.panel_rect.y - c_h - 10)
+        else:
+            c_y = mon.y + mon.height - c_h - 16
+
+        self.console_rect = pygame.Rect(c_x, c_y, c_w, c_h)
+        c_surf = pygame.Surface((c_w, c_h), pygame.SRCALPHA)
+        c_surf.fill((8, 12, 20, 246))
+
+        is_c2 = visualizer.is_colors_2_0_active() if (visualizer and hasattr(visualizer, "is_colors_2_0_active")) else True
+        accent_col = (0, 240, 255) if is_c2 else (255, 140, 20)
+
+        # Border & Corner brackets
+        pygame.draw.rect(c_surf, (*accent_col, 160), pygame.Rect(0, 0, c_w, c_h), width=1, border_radius=6)
+        self._draw_tech_corner_brackets(c_surf, pygame.Rect(0, 0, c_w, c_h), (*accent_col, 220), bracket_len=12, width=2)
+
+        # 1. Console Top Header Bar
+        hdr_h = 32
+        hdr_rect = pygame.Rect(0, 0, c_w, hdr_h)
+        pygame.draw.rect(c_surf, (14, 20, 32, 230), hdr_rect, border_top_left_radius=6, border_top_right_radius=6)
+        pygame.draw.line(c_surf, (*accent_col, 70), (8, hdr_h), (c_w - 8, hdr_h))
+
+        # Title
+        t_surf = self.font_section.render("colors // REAL-TIME LOGIC & MATH TELEMETRY CONSOLE", True, (240, 245, 255))
+        c_surf.blit(t_surf, (12, 8))
+
+        # Live dot & Engine badge
+        live_dot = pygame.Rect(t_surf.get_width() + 24, 12, 7, 7)
+        pygame.draw.circle(c_surf, (0, 255, 120), live_dot.center, 3)
+        live_txt = self.font_tiny.render("LIVE", True, (0, 255, 120))
+        c_surf.blit(live_txt, (live_dot.right + 4, 8))
+
+        eng_str = "[ colors2.0 PLL ]" if is_c2 else "[ colors1.0 RAW ]"
+        eng_s = self.font_tiny.render(eng_str, True, accent_col)
+        c_surf.blit(eng_s, (live_dot.right + 34, 8))
+
+        # BPM & Section telemetry
+        bpm = audio_state.get("bpm", 0.0)
+        bpm_conf = audio_state.get("bpm_confidence", 0.0)
+        sec_name = audio_state.get("section", "NORMAL")
+        stat_str = f"BPM: {bpm:.1f} ({int(bpm_conf*100)}% conf) | SEC: {sec_name}"
+        stat_s = self.font_tiny.render(stat_str, True, (130, 160, 195))
+        c_surf.blit(stat_s, (c_w - 240, 8))
+
+        # Close button [X]
+        self.console_close_btn = pygame.Rect(self.console_rect.right - 26, self.console_rect.y + 6, 20, 20)
+        close_local = pygame.Rect(c_w - 26, 6, 20, 20)
+        pygame.draw.rect(c_surf, (35, 18, 24, 200), close_local, border_radius=3)
+        pygame.draw.rect(c_surf, (255, 70, 70, 180), close_local, width=1, border_radius=3)
+        x_surf = self.font_tiny.render("X", True, (255, 100, 100))
+        c_surf.blit(x_surf, (close_local.x + 6, close_local.y + 3))
+
+        # 2. Live Trigger Math & Threshold Dashboard (Top row, height ~72px)
+        math_y = 38
+        math_h = 70
+        col_gap = 8
+        col_w = (c_w - 24 - 2 * col_gap) // 3
+
+        # Card A: Flux vs Dynamic Thresholds
+        card_a = pygame.Rect(12, math_y, col_w, math_h)
+        pygame.draw.rect(c_surf, (12, 16, 26, 210), card_a, border_radius=4)
+        pygame.draw.rect(c_surf, (30, 48, 70, 140), card_a, width=1, border_radius=4)
+        a_title = self.font_tiny.render("SPECTRAL FLUX VS DYNAMIC THRESHOLDS", True, (100, 210, 255))
+        c_surf.blit(a_title, (card_a.x + 8, card_a.y + 5))
+
+        b_flux = audio_state.get("bass_flux", 0.0)
+        b_thresh = audio_state.get("dynamic_thresh", 0.0)
+        h_flux = audio_state.get("high_flux", 0.0)
+        h_thresh = audio_state.get("high_thresh", 0.0)
+        s_flux = audio_state.get("sub_flux", 0.0)
+        s_thresh = audio_state.get("sub_thresh", 0.0)
+
+        # Bass flux line
+        b_ratio = (b_flux / max(1e-4, b_thresh)) if b_thresh > 0 else 0.0
+        b_trig = b_flux >= b_thresh and b_flux > 0.05
+        b_col = (0, 255, 140) if b_trig else (140, 160, 180)
+        b_str = f"KICK: flux {b_flux:.2f} / th {b_thresh:.2f} ({b_ratio:.2f}x) {'[TRIG]' if b_trig else ''}"
+        c_surf.blit(self.font_tiny.render(b_str, True, b_col), (card_a.x + 8, card_a.y + 20))
+
+        # High flux line (Snare)
+        h_ratio = (h_flux / max(1e-4, h_thresh)) if h_thresh > 0 else 0.0
+        h_trig = h_flux >= h_thresh and h_flux > 0.05
+        h_col = (255, 220, 50) if h_trig else (140, 160, 180)
+        h_str = f"SNARE: flux {h_flux:.2f} / th {h_thresh:.2f} ({h_ratio:.2f}x) {'[TRIG]' if h_trig else ''}"
+        c_surf.blit(self.font_tiny.render(h_str, True, h_col), (card_a.x + 8, card_a.y + 35))
+
+        # Sub-bass flux line (808)
+        s_ratio = (s_flux / max(1e-4, s_thresh)) if s_thresh > 0 else 0.0
+        s_trig = s_flux >= s_thresh and s_flux > 0.05
+        s_col = (200, 100, 255) if s_trig else (140, 160, 180)
+        s_str = f"808 SUB: flux {s_flux:.2f} / th {s_thresh:.2f} ({s_ratio:.2f}x) {'[TRIG]' if s_trig else ''}"
+        c_surf.blit(self.font_tiny.render(s_str, True, s_col), (card_a.x + 8, card_a.y + 50))
+
+        # Card B: PLL Grid & 808 Tail Gating
+        card_b = pygame.Rect(card_a.right + col_gap, math_y, col_w, math_h)
+        pygame.draw.rect(c_surf, (12, 16, 26, 210), card_b, border_radius=4)
+        pygame.draw.rect(c_surf, (30, 48, 70, 140), card_b, width=1, border_radius=4)
+        b_title = self.font_tiny.render("PHASE-LOCKED LOOP (PLL) & 808 ISOLATION", True, (100, 210, 255))
+        c_surf.blit(b_title, (card_b.x + 8, card_b.y + 5))
+
+        grid_mult = audio_state.get("grid_mult", 1.0)
+        is_attack = audio_state.get("is_attack_transient", True)
+        on_grid = grid_mult > 1.05
+        pll_col = (0, 255, 140) if on_grid else ((255, 160, 40) if grid_mult < 0.95 else (140, 170, 200))
+        pll_status = "ON-GRID BOOST" if on_grid else ("OFF-BEAT SUPPRESS" if grid_mult < 0.95 else "NEUTRAL")
+        pll_str = f"PLL Grid Multiplier: {grid_mult:.2f}x -> {pll_status}"
+        c_surf.blit(self.font_tiny.render(pll_str, True, pll_col), (card_b.x + 8, card_b.y + 20))
+
+        att_str = "808 Transient: ATTACK IMPACT" if is_attack else "808 Transient: SUSTAIN TAIL (GATED)"
+        att_col = (0, 240, 255) if is_attack else (255, 130, 80)
+        c_surf.blit(self.font_tiny.render(att_str, True, att_col), (card_b.x + 8, card_b.y + 35))
+
+        eng_note = "Smart Mode: Bayesian Prior + 808 Filter" if is_c2 else "Classic Mode: Raw Peak Unconstrained"
+        c_surf.blit(self.font_tiny.render(eng_note, True, (120, 145, 175)), (card_b.x + 8, card_b.y + 50))
+
+        # Card C: Audio Gain, Energy & Bands
+        card_c = pygame.Rect(card_b.right + col_gap, math_y, col_w, math_h)
+        pygame.draw.rect(c_surf, (12, 16, 26, 210), card_c, border_radius=4)
+        pygame.draw.rect(c_surf, (30, 48, 70, 140), card_c, width=1, border_radius=4)
+        c_title = self.font_tiny.render("ENERGY, AGC GAIN & BAND ENERGIES", True, (100, 210, 255))
+        c_surf.blit(c_title, (card_c.x + 8, card_c.y + 5))
+
+        tot_lvl = audio_state.get("total_level", 0.0)
+        peak_lvl = audio_state.get("peak", audio_state.get("raw_peak", 0.0))
+        sens = audio_mgr.get_sensitivity() if (audio_mgr and hasattr(audio_mgr, "get_sensitivity")) else 1.0
+        preamp = audio_mgr.get_preamp_gain() if (audio_mgr and hasattr(audio_mgr, "get_preamp_gain")) else 1.0
+        c_surf.blit(self.font_tiny.render(f"RMS: {tot_lvl:.3f} | Peak: {peak_lvl:.3f} | Sens: {sens:.1f}x | Gain: {preamp:.1f}x", True, (160, 185, 215)), (card_c.x + 8, card_c.y + 20))
+
+        b_sub = audio_state.get("bass_level", 0.0)
+        b_mid = audio_state.get("mid_level", 0.0)
+        b_hi = audio_state.get("high_level", 0.0)
+        c_surf.blit(self.font_tiny.render(f"Bands: Sub/Bass {b_sub:.2f} | Mid {b_mid:.2f} | High {b_hi:.2f}", True, (140, 170, 200)), (card_c.x + 8, card_c.y + 35))
+
+        # Strobe visual state
+        strobe_alpha = getattr(visualizer, "alpha", 0.0) if visualizer else 0.0
+        is_solid = getattr(visualizer, "solid_color_active", False)
+        vis_st = f"Strobe Alpha: {strobe_alpha:.2f} | Solid Mode: {'ACTIVE' if is_solid else 'OFF'}"
+        c_surf.blit(self.font_tiny.render(vis_st, True, (255, 205, 50) if is_solid else (120, 145, 175)), (card_c.x + 8, card_c.y + 50))
+
+        # 3. Live Rationale Terminal Stream (Bottom section)
+        term_y = math_y + math_h + 8
+        term_h = c_h - term_y - 10
+        term_rect = pygame.Rect(12, term_y, c_w - 24, term_h)
+        pygame.draw.rect(c_surf, (5, 7, 12, 240), term_rect, border_radius=4)
+        pygame.draw.rect(c_surf, (24, 38, 56, 160), term_rect, width=1, border_radius=4)
+
+        t_lbl = self.font_tiny.render("// REAL-TIME TRIGGER RATIONALE LOG (CHRONOLOGICAL STREAM)", True, (70, 130, 180))
+        c_surf.blit(t_lbl, (term_rect.x + 8, term_rect.y + 5))
+
+        raw_logs = list(audio_state.get("telemetry_logs", []))
+        line_h = 14
+        max_lines = max(1, (term_h - 22) // line_h)
+        display_logs = raw_logs[-max_lines:] if raw_logs else []
+
+        if not display_logs:
+            c_surf.blit(self.font_tiny.render("[Listening for audio triggers and rhythm onsets...]", True, (90, 110, 135)), (term_rect.x + 10, term_rect.y + 22))
+        else:
+            ly = term_rect.y + 20
+            for log_entry in display_logs:
+                if "[KICK]" in log_entry:
+                    txt_col = (80, 255, 150)
+                elif "[808 SUB]" in log_entry:
+                    txt_col = (210, 120, 255)
+                elif "[808 TAIL GATED]" in log_entry:
+                    txt_col = (180, 140, 90)
+                elif "[SNARE]" in log_entry:
+                    txt_col = (255, 230, 60)
+                elif "[HIHAT]" in log_entry:
+                    txt_col = (130, 220, 255)
+                elif "[DROP]" in log_entry:
+                    txt_col = (255, 80, 80)
+                elif "[SECTION]" in log_entry:
+                    txt_col = (0, 240, 255)
+                elif "[PLL SYNC]" in log_entry:
+                    txt_col = (120, 255, 90)
+                elif "[ENGINE]" in log_entry:
+                    txt_col = (255, 205, 50)
+                else:
+                    txt_col = (175, 190, 210)
+
+                log_s = self.font_tiny.render(log_entry, True, txt_col)
+                c_surf.blit(log_s, (term_rect.x + 10, ly))
+                ly += line_h
+
+        screen.blit(c_surf, (self.console_rect.x, self.console_rect.y))

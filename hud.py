@@ -235,7 +235,7 @@ class HUD:
         # Solid Color Lighting Control Deck & Swatches Bar
         solid_y = panel_y + 188
         solid_h = 22
-        btn_solid_w = 96
+        btn_solid_w = 114
         self.btn_solid_toggle = pygame.Rect(panel_x + pad_x, solid_y, btn_solid_w, solid_h)
 
         name_badge_w = 72
@@ -684,25 +684,27 @@ class HUD:
         self._draw_tech_corner_brackets(hud_surf, panel, (*accent_col, min(220, alpha_int)), bracket_len=10, width=2)
 
         # Top Header Divider Bar
-        header_h = 24
+        header_h = 42
         header_surf = pygame.Surface((panel.width, header_h), pygame.SRCALPHA)
         header_surf.fill((14, 18, 28, min(210, alpha_int)))
         hud_surf.blit(header_surf, (panel.x, panel.y))
-        pygame.draw.line(hud_surf, (*accent_col, min(80, alpha_int)), (panel.x + 8, panel.y + header_h), (panel.right - 8, panel.y + header_h))
+        pygame.draw.line(hud_surf, (*accent_col, min(50, alpha_int)), (panel.x + 8, panel.y + header_h), (panel.right - 8, panel.y + header_h))
 
         # Title: BEAT STROBE
         t_surf = self.font_title.render("BEAT STROBE", True, (240, 245, 255))
-        hud_surf.blit(t_surf, (panel.x + 14, panel.y + 4))
+        hud_surf.blit(t_surf, (panel.x + 14, panel.y + 10))
 
         # Active Mode Pill
         pill_w = self.font_tiny.size(pill_text)[0] + 12
-        pill_rect = pygame.Rect(panel.x + 14 + t_surf.get_width() + 10, panel.y + 4, pill_w, 16)
+        pill_rect = pygame.Rect(panel.x + 14 + t_surf.get_width() + 10, panel.y + 10, pill_w, 18)
         pygame.draw.rect(hud_surf, (*pill_bg, alpha_int), pill_rect, border_radius=3)
         pygame.draw.rect(hud_surf, (*pill_col, min(180, alpha_int)), pill_rect, width=1, border_radius=3)
         p_text_surf = self.font_tiny.render(pill_text, True, pill_col)
-        hud_surf.blit(p_text_surf, (pill_rect.x + 6, pill_rect.y + 1))
+        hud_surf.blit(p_text_surf, (pill_rect.x + 6, pill_rect.y + 2))
 
-        # Right Header Pills (Source, Hardware, Network)
+        left_hdr_end = pill_rect.right + 14
+
+        # Right Header Pills (Source, Hardware, Network) - anchored cleanly to left of card
         right_pills = []
         is_spotify = (audio_mgr and getattr(audio_mgr, "devices", None) and
                       len(audio_mgr.devices) > audio_mgr.current_device_index and
@@ -727,27 +729,30 @@ class HUD:
         elif sync_mgr and sync_mgr.role == ROLE_CLIENT:
             right_pills.append(("CLIENT", (100, 240, 255), (14, 32, 48)))
 
-        rx = panel.right - 14
+        card_anchor_x = self.card_album_art.x if hasattr(self, "card_album_art") else (panel.right - 238)
+        rx = card_anchor_x - 12
         for p_name, p_fg, p_bg in reversed(right_pills):
             p_tw = self.font_tiny.size(p_name)[0] + 10
             rx -= p_tw
-            r_pill = pygame.Rect(rx, panel.y + 4, p_tw, 16)
+            r_pill = pygame.Rect(rx, panel.y + 10, p_tw, 18)
             pygame.draw.rect(hud_surf, (*p_bg, alpha_int), r_pill, border_radius=3)
             pygame.draw.rect(hud_surf, (*p_fg, min(140, alpha_int)), r_pill, width=1, border_radius=3)
-            hud_surf.blit(self.font_tiny.render(p_name, True, p_fg), (r_pill.x + 5, r_pill.y + 1))
+            hud_surf.blit(self.font_tiny.render(p_name, True, p_fg), (r_pill.x + 5, r_pill.y + 2))
             rx -= 6
 
-        # 2. Audio & Media Deck (Top Row: Spectrum, VU, BPM, and Now Playing Card)
-        spec_x = panel.x + 18
-        spec_y = panel.y + 28
-        avail_for_audio = max(240, self.card_album_art.x - spec_x - 30)
-        spec_w = min(220, int(avail_for_audio * 0.46))
-        spec_h = 38
+        # 2. Audio & Media Deck (Center Row: Spectrum, VU, BPM bounded without clipping)
+        audio_zone_right = max(left_hdr_end + 200, rx - 10)
+        avail_for_audio = max(180, audio_zone_right - left_hdr_end)
+
+        spec_x = left_hdr_end
+        spec_y = panel.y + 10
+        spec_w = min(130, max(50, int(avail_for_audio * 0.36)))
+        spec_h = 26
 
         # Background chamber for spectrum
-        spec_bg = pygame.Rect(spec_x - 4, spec_y - 2, spec_w + 8, spec_h + 4)
-        pygame.draw.rect(hud_surf, (14, 18, 28, alpha_int), spec_bg, border_radius=4)
-        pygame.draw.rect(hud_surf, (30, 48, 68, alpha_int), spec_bg, width=1, border_radius=4)
+        spec_bg = pygame.Rect(spec_x - 3, spec_y - 2, spec_w + 6, spec_h + 4)
+        pygame.draw.rect(hud_surf, (14, 18, 28, alpha_int), spec_bg, border_radius=3)
+        pygame.draw.rect(hud_surf, (30, 48, 68, alpha_int), spec_bg, width=1, border_radius=3)
 
         spec_bars = audio_state.get("spectrum_bars", [])
         num_bars = len(spec_bars)
@@ -762,52 +767,52 @@ class HUD:
                 bar_b = int(255)
                 bar_rect = pygame.Rect(int(bx), spec_y + spec_h - bh, max(2, int(bw)), max(2, bh))
                 pygame.draw.rect(hud_surf, (bar_r, bar_g, bar_b, alpha_int), bar_rect, border_radius=1)
-                if bh > 4:
+                if bh > 3:
                     cap_rect = pygame.Rect(int(bx), spec_y + spec_h - bh, max(2, int(bw)), 2)
                     pygame.draw.rect(hud_surf, (255, 255, 255, alpha_int), cap_rect)
 
-        # Frequency VU Level Meters
-        levels_x = spec_x + spec_w + 14
-        levels_y = spec_y
-        meter_w = min(96, int(avail_for_audio * 0.21))
-        meter_h = 8
+        # Frequency VU Level Meters (BAS, MID, HIG - 100% visible above waveform)
+        levels_x = spec_x + spec_w + 12
+        levels_y = panel.y + 8
+        meter_w = min(68, max(36, int(avail_for_audio * 0.20)))
+        meter_h = 6
 
         b_val = audio_state.get("bass_level", 0.0)
         m_val = audio_state.get("mid_level", 0.0)
         h_val = audio_state.get("high_level", 0.0)
 
         hud_surf.blit(self.font_tiny.render("BAS", True, (255, 90, 130)), (levels_x, levels_y - 1))
-        self._render_segmented_vu(hud_surf, levels_x + 28, levels_y + 1, meter_w, meter_h, b_val, (255, 40, 100), alpha_int)
+        self._render_segmented_vu(hud_surf, levels_x + 24, levels_y + 1, meter_w, meter_h, b_val, (255, 40, 100), alpha_int)
 
-        hud_surf.blit(self.font_tiny.render("MID", True, (60, 240, 140)), (levels_x, levels_y + 13))
-        self._render_segmented_vu(hud_surf, levels_x + 28, levels_y + 15, meter_w, meter_h, m_val, (50, 240, 130), alpha_int)
+        hud_surf.blit(self.font_tiny.render("MID", True, (60, 240, 140)), (levels_x, levels_y + 9))
+        self._render_segmented_vu(hud_surf, levels_x + 24, levels_y + 11, meter_w, meter_h, m_val, (50, 240, 130), alpha_int)
 
-        hud_surf.blit(self.font_tiny.render("HIG", True, (70, 200, 255)), (levels_x, levels_y + 27))
-        self._render_segmented_vu(hud_surf, levels_x + 28, levels_y + 29, meter_w, meter_h, h_val, (60, 210, 255), alpha_int)
+        hud_surf.blit(self.font_tiny.render("HIG", True, (70, 200, 255)), (levels_x, levels_y + 19))
+        self._render_segmented_vu(hud_surf, levels_x + 24, levels_y + 21, meter_w, meter_h, h_val, (60, 210, 255), alpha_int)
 
         # Beat Pulse Reticle & BPM
-        beat_x = levels_x + 28 + meter_w + 18
-        beat_y = levels_y + 18
+        beat_x = levels_x + 24 + meter_w + 14
+        beat_y = panel.y + 20
         is_beating = visualizer.kick_intensity > 0.4
 
         reticle_col = (255, 40, 120) if is_beating else (45, 60, 80)
-        pygame.draw.circle(hud_surf, reticle_col, (beat_x, beat_y), 11, width=1)
+        pygame.draw.circle(hud_surf, reticle_col, (beat_x, beat_y), 9, width=1)
         if is_beating:
-            pygame.draw.circle(hud_surf, (255, 50, 140, alpha_int), (beat_x, beat_y), 7)
-            pygame.draw.circle(hud_surf, (255, 255, 255, alpha_int), (beat_x, beat_y), 3)
+            pygame.draw.circle(hud_surf, (255, 50, 140, alpha_int), (beat_x, beat_y), 6)
+            pygame.draw.circle(hud_surf, (255, 255, 255, alpha_int), (beat_x, beat_y), 2)
         else:
             pygame.draw.circle(hud_surf, (35, 45, 60, alpha_int), (beat_x, beat_y), 2)
 
         bpm = audio_state.get("bpm", 0.0)
         bpm_str = f"{int(round(bpm))} BPM" if bpm > 30 else "-- BPM"
         bpm_surf = self.font_title.render(bpm_str, True, (0, 240, 255))
-        hud_surf.blit(bpm_surf, (beat_x + 18, beat_y - 12))
+        hud_surf.blit(bpm_surf, (beat_x + 14, beat_y - 12))
 
         pitch_name = audio_state.get("pitch_name", "C")
         sec_name = audio_state.get("section_name", "VERSE")
         pitch_badge = f"KEY:{pitch_name}"
         p_surf = self.font_tiny.render(pitch_badge, True, (255, 120, 220))
-        hud_surf.blit(p_surf, (beat_x + 18, beat_y + 3))
+        hud_surf.blit(p_surf, (beat_x + 14, beat_y + 3))
 
         if sec_name == "CHORUS":
             sec_surf = self.font_tiny.render("[CHORUS]", True, (255, 60, 180))
@@ -815,7 +820,7 @@ class HUD:
             sec_surf = self.font_tiny.render("[BUILDUP]", True, (255, 200, 40))
         else:
             sec_surf = self.font_tiny.render("[VERSE]", True, (0, 220, 255))
-        hud_surf.blit(sec_surf, (beat_x + 18 + p_surf.get_width() + 6, beat_y + 3))
+        hud_surf.blit(sec_surf, (beat_x + 14 + p_surf.get_width() + 6, beat_y + 3))
 
         # Now Playing Native Album Cover Artwork Card
         if media_mgr and hasattr(self, "card_album_art"):
@@ -1002,7 +1007,7 @@ class HUD:
 
             # Right-side Time Deck
             if dur_sec > 0:
-                badge_str = "[PAUSED]" if is_paused else ("[ACTIVE]" if is_playing else "[STOPPED]")
+                badge_str = "[PAUSED]" if is_paused else ("[TRACK SYNC]" if is_playing else "[STOPPED]")
                 badge_col = (255, 180, 50) if is_paused else ((0, 240, 255) if is_playing else (110, 130, 155))
             else:
                 badge_str = "[STANDBY]"

@@ -57,8 +57,9 @@ class BeatStrobeApp:
         self.visualizer.set_mode(MODE_ALBUM_ART)
 
         # Engage Crazy Overdrive Mode by default for maximum strobe intensity!
-        self.audio_mgr.set_overdrive(True)
-        self.visualizer.overdrive_mode = True
+        # Launch in Smart Rhythmic Mode by default (Overdrive accessible via hotkey X or HUD toggle)
+        self.audio_mgr.set_overdrive(False)
+        self.visualizer.overdrive_mode = False
 
         if initial_mon:
             self.hud.set_active_monitor(initial_mon)
@@ -82,7 +83,7 @@ class BeatStrobeApp:
             "bpm": 0.0,
             "bpm_confidence": 1.0,
             "raw_waveform": np.zeros(1024, dtype=np.float32),
-            "overdrive": True,
+            "overdrive": False,
             "raw_peak": 0.0,
             "agc_gain": 1.0,
             "preamp_gain": 1.8,

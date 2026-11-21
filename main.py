@@ -353,7 +353,7 @@ class BeatStrobeApp:
                     audio_state["position"] = tl_pos
 
                     # Keep audio detector synchronized with smart vs classic mode
-                    is_smart = (self.visualizer.mode == MODE_STROBE_2_0) and not self.visualizer.overdrive_mode
+                    is_smart = self.visualizer.is_smart_mode_active()
                     if hasattr(self.audio_mgr, "set_smart_mode"):
                         self.audio_mgr.set_smart_mode(is_smart)
                     if hasattr(self.audio_mgr, "set_overdrive"):

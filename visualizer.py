@@ -190,8 +190,8 @@ class VisualizerEngine:
         return self.mode == MODE_CLASSIC_RAPID
 
     def is_smart_mode_active(self):
-        """Return True if Smart Rhythm (Strobe 2.0) mode is active."""
-        return (self.mode == MODE_STROBE_2_0) and not self.overdrive_mode
+        """Return True if Smart Rhythm detection is active."""
+        return (self.mode not in (MODE_CLASSIC_RAPID, MODE_PSYCHO_OVERDRIVE)) and not self.overdrive_mode
 
     def toggle_classic_rapid(self):
         """Toggle between Classic Rapid Mode (how it was before) and Smart mode."""

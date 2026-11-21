@@ -7,9 +7,12 @@ and Razer Chroma REST API.
 
 import sys
 import time
+import math
+import random
 import queue
 import threading
 import ctypes
+import numpy as np
 try:
     from ctypes import wintypes
 except ImportError:
@@ -64,6 +67,200 @@ class RazerDevice:
         return f"<RazerDevice {self.name} ({self.device_type}) PID=0x{self.pid:04X} LED=0x{self.led_id:02X}>"
 
 
+class KeyboardMatrixEngine:
+    """
+    High-performance per-key and per-row RGB matrix animation engine for Razer Chroma keyboards.
+    Computes a 6-row by 22-column RGB grid with sub-millisecond overhead.
+    Features:
+      - Row 0: 22-Key Real-Time Live Frequency Spectrum VU Equalizer (Esc, F1-F12, PrtSc, Pause, Media)
+      - Radial Kick / 808 Shockwaves radiating outward across keycaps from Spacebar (Row 5, Col 8)
+      - Lateral Snare / Clap Accent Wave across typing rows (Rows 2, 3, 4)
+      - Hi-Hat Micro-Sparkles across number and QWERTY rows (Rows 1, 2)
+      - Spatial Stereo Spread: Columns 0-10 track Left Monitor, Columns 11-21 track Right Monitor
+      - Instant Zero-Lag Hardware Blackout cut synchronized with display strobe cuts
+      - Static Solid Color override illumination matching HUD solid color presets
+    """
+
+    ROWS = 6
+    COLS = 22
+
+    def __init__(self):
+        self.matrix = np.zeros((self.ROWS, self.COLS, 3), dtype=np.uint8)
+        self.last_matrix = np.zeros((self.ROWS, self.COLS, 3), dtype=np.uint8)
+
+        # Precompute radial Euclidean distances from epicenter (Spacebar: row 5, col 8)
+        # Vertical distance is scaled by 2.2 to account for keycap aspect ratio
+        self.D_radial = np.zeros((self.ROWS, self.COLS), dtype=np.float32)
+        for r in range(self.ROWS):
+            for c in range(self.COLS):
+                self.D_radial[r, c] = math.sqrt((c - 8.0) ** 2 + ((5 - r) * 2.2) ** 2)
+
+        # Precompute lateral distances from keyboard center (col 10.5)
+        self.D_lateral = np.zeros((self.ROWS, self.COLS), dtype=np.float32)
+        for r in range(self.ROWS):
+            for c in range(self.COLS):
+                self.D_lateral[r, c] = abs(c - 10.5)
+
+        self.shockwaves = []
+        self.snare_radius = 0.0
+        self.snare_intensity = 0.0
+        self.snare_color = (255, 255, 255)
+        self.sparkles = []
+        self.last_kick_time = 0.0
+        self.last_snare_time = 0.0
+        self.last_hihat_time = 0.0
+
+    def generate_matrix(self, dt, col_left, col_right, strobe_cut, audio_state=None, is_dual=False, vis_state=None):
+        """
+        Generate 6x22 RGB matrix based on audio state, monitor colors, and visualizer events.
+        Returns (matrix: np.ndarray (6, 22, 3) uint8, is_blackout: bool).
+        """
+        # 1. Solid Color Mode Override
+        if vis_state and vis_state.get("solid_color_active"):
+            solid_rgb = vis_state.get("solid_color", (255, 0, 0))
+            self.matrix[:, :] = solid_rgb
+            return self.matrix, False
+
+        now = time.time()
+
+        # 2. Process beat events from audio_state
+        if audio_state:
+            is_kick = audio_state.get("is_kick", False) or audio_state.get("is_drop", False)
+            kick_int = vis_state.get("kick_intensity", 0.0) if vis_state else 0.0
+            if is_kick or kick_int > 0.65:
+                if (now - self.last_kick_time) >= 0.075:
+                    self.last_kick_time = now
+                    # Derive high-energy shockwave color
+                    base_k = col_left if max(col_left) > 40 else (0, 240, 255)
+                    max_k = max(base_k) or 1
+                    scale_k = 255.0 / max_k
+                    k_col = (
+                        min(255, int(base_k[0] * scale_k)),
+                        min(255, int(base_k[1] * scale_k)),
+                        min(255, int(base_k[2] * scale_k)),
+                    )
+                    if len(self.shockwaves) < 3:
+                        self.shockwaves.append({
+                            "radius": 0.0,
+                            "speed": 48.0,
+                            "max_radius": 24.0,
+                            "color": k_col,
+                            "intensity": 1.0,
+                            "decay": 3.4,
+                        })
+
+            is_snare = audio_state.get("is_snare", False)
+            snare_int = vis_state.get("snare_intensity", 0.0) if vis_state else 0.0
+            if is_snare or snare_int > 0.60:
+                if (now - self.last_snare_time) >= 0.09:
+                    self.last_snare_time = now
+                    sec_col = col_right if max(col_right) > 40 else (255, 80, 200)
+                    self.snare_radius = 0.0
+                    self.snare_intensity = 1.0
+                    self.snare_color = (
+                        min(255, sec_col[0] + 50),
+                        min(255, sec_col[1] + 50),
+                        min(255, sec_col[2] + 50),
+                    )
+
+            is_hihat = audio_state.get("is_hihat", False)
+            if is_hihat and (now - self.last_hihat_time) >= 0.05:
+                self.last_hihat_time = now
+                for _ in range(3):
+                    r = random.randint(1, 3)
+                    c = random.randint(1, 20)
+                    self.sparkles.append([r, c, (255, 255, 255), 0.06])
+
+        # 3. Base Monitor Matching (Rows 1..5)
+        self.matrix.fill(0)
+        has_screen_color = (max(col_left) > 0 or max(col_right) > 0)
+
+        if has_screen_color:
+            if is_dual:
+                self.matrix[1:, :10] = col_left
+                self.matrix[1:, 12:] = col_right
+                blend_c = [int((col_left[i] + col_right[i]) * 0.5) for i in range(3)]
+                self.matrix[1:, 10:12] = blend_c
+            else:
+                self.matrix[1:, :] = col_left
+
+        # 4. Row 0: 22-Key Live Frequency Spectrum VU Meter
+        bars = audio_state.get("spectrum_bars", None) if audio_state else None
+        if bars is not None and len(bars) > 0:
+            bands_22 = np.interp(np.linspace(0, len(bars) - 1, self.COLS), np.arange(len(bars)), bars)
+            for c in range(self.COLS):
+                v = float(bands_22[c])
+                if v > 0.02:
+                    if c < 5:
+                        base_c = col_left if max(col_left) > 40 else (0, 240, 255)
+                    elif c < 12:
+                        base_c = col_right if max(col_right) > 40 else (255, 60, 200)
+                    else:
+                        base_c = (190, 240, 255)
+                    v_scale = min(1.0, v * 1.5)
+                    self.matrix[0, c] = [
+                        min(255, int(base_c[0] * v_scale)),
+                        min(255, int(base_c[1] * v_scale)),
+                        min(255, int(base_c[2] * v_scale)),
+                    ]
+        elif has_screen_color:
+            self.matrix[0, :] = col_left
+
+        # 5. Radial Kick & 808 Shockwave Waves (Rows 1..5)
+        active_sw = []
+        for sw in self.shockwaves:
+            sw["radius"] += sw["speed"] * dt
+            sw["intensity"] -= sw["decay"] * dt
+            if sw["radius"] < sw["max_radius"] and sw["intensity"] > 0.0:
+                active_sw.append(sw)
+                diff = np.abs(self.D_radial[1:] - sw["radius"])
+                mask = (diff < 2.4)
+                if np.any(mask):
+                    crest_int = (1.0 - diff[mask] / 2.4) * sw["intensity"]
+                    cur = self.matrix[1:][mask].astype(np.float32)
+                    for i in range(3):
+                        cur[:, i] = np.clip(cur[:, i] + sw["color"][i] * crest_int, 0, 255)
+                    self.matrix[1:][mask] = cur.astype(np.uint8)
+
+                # Trailing afterglow
+                trail_mask = (self.D_radial[1:] < sw["radius"]) & (~mask)
+                if np.any(trail_mask):
+                    trail_int = (self.D_radial[1:][trail_mask] / max(1.0, sw["radius"])) * sw["intensity"] * 0.35
+                    cur = self.matrix[1:][trail_mask].astype(np.float32)
+                    for i in range(3):
+                        cur[:, i] = np.clip(cur[:, i] + sw["color"][i] * trail_int, 0, 255)
+                    self.matrix[1:][trail_mask] = cur.astype(np.uint8)
+        self.shockwaves = active_sw
+
+        # 6. Snare Lateral Horizontal Wave (Rows 2, 3, 4)
+        if self.snare_intensity > 0.0:
+            self.snare_radius += 68.0 * dt
+            self.snare_intensity -= 7.5 * dt
+            if self.snare_intensity > 0.0 and self.snare_radius < 14.0:
+                diff_lat = np.abs(self.D_lateral[2:5] - self.snare_radius)
+                s_mask = (diff_lat < 2.2)
+                if np.any(s_mask):
+                    s_int = (1.0 - diff_lat[s_mask] / 2.2) * self.snare_intensity
+                    cur = self.matrix[2:5][s_mask].astype(np.float32)
+                    for i in range(3):
+                        cur[:, i] = np.clip(cur[:, i] + self.snare_color[i] * s_int, 0, 255)
+                    self.matrix[2:5][s_mask] = cur.astype(np.uint8)
+
+        # 7. Hi-Hat Micro-Sparkles
+        active_sp = []
+        for sp in self.sparkles:
+            r, c, col, life = sp
+            life -= dt
+            if life > 0.0 and 0 <= r < self.ROWS and 0 <= c < self.COLS:
+                active_sp.append([r, c, col, life])
+                self.matrix[r, c] = [255, 255, 255]
+        self.sparkles = active_sp
+
+        # 8. Check if entirely pitch black
+        is_blackout = bool(np.all(self.matrix == 0))
+        return self.matrix, is_blackout
+
+
 class RazerChromaManager:
     """Synchronizes screen strobe colors with connected Razer peripherals in real time."""
 
@@ -73,6 +270,7 @@ class RazerChromaManager:
         self.device_names = []
         self.device_count = 0
         self.active_mode = "NONE"
+        self.matrix_engine = KeyboardMatrixEngine()
 
         self.color_queue = queue.Queue(maxsize=2)
         self.running = True
@@ -355,13 +553,26 @@ class RazerChromaManager:
         scale = target_max / max(1, max_c)
         return (min(255, int(r * scale)), min(255, int(g * scale)), min(255, int(b * scale)))
 
-    def set_colors(self, rgb_left, rgb_right=None, strobe_cut=True):
-        """Push target colors to Razer hardware (non-blocking, freshest frame only)."""
+    def set_colors(self, rgb_left, rgb_right=None, strobe_cut=True, audio_state=None, is_dual=False, visualizer=None):
+        """Push target colors, audio spectrum, and beat dynamics to Razer hardware (non-blocking)."""
         if not self.enabled or not self.devices:
             return
 
         c_left = tuple(max(0, min(255, int(v))) for v in rgb_left[:3])
         c_right = tuple(max(0, min(255, int(v))) for v in (rgb_right or rgb_left)[:3])
+
+        vis_state = None
+        if visualizer:
+            vis_state = {
+                "kick_intensity": getattr(visualizer, "kick_intensity", 0.0),
+                "snare_intensity": getattr(visualizer, "snare_intensity", 0.0),
+                "palette_colors": list(getattr(visualizer, "palette_colors", [])),
+                "solid_color_active": getattr(visualizer, "solid_color_active", False),
+                "solid_color": getattr(visualizer, "solid_color", (255, 0, 0)),
+                "overdrive_mode": getattr(visualizer, "overdrive_mode", False),
+                "safe_mode": getattr(visualizer, "safe_mode", False),
+                "mode": getattr(visualizer, "mode", ""),
+            }
 
         # Drain any backlog so the queue only ever holds the newest frame (zero latency)
         try:
@@ -371,15 +582,18 @@ class RazerChromaManager:
             pass
 
         try:
-            self.color_queue.put_nowait((c_left, c_right, strobe_cut))
+            self.color_queue.put_nowait((c_left, c_right, strobe_cut, audio_state, is_dual, vis_state))
         except Exception:
             pass
 
     def _worker_loop(self):
-        """Asynchronous worker loop sending 91-byte USB HID feature reports."""
-        last_sent_left = (0, 0, 0)
-        last_sent_right = (0, 0, 0)
+        """Asynchronous worker loop sending 91-byte USB HID feature reports with zero lag."""
+        last_sent_mouse_color = None
+        last_sent_row_bytes = [None] * 6
         last_refresh_time = time.time()
+        last_loop_time = time.perf_counter()
+        was_kbd_blackout = False
+        was_mouse_blackout = False
 
         # Pre-allocate static draw frame command for keyboard matrix (0x0F, 0x02, 0x0C, effect=0x08)
         buf_draw = bytearray(91)
@@ -412,30 +626,41 @@ class RazerChromaManager:
         buf_sw_static_black[1:] = _create_razer_report(0x0F, 0x02, 0x09, [0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x3F)
         cbuf_sw_static_black = (ctypes.c_char * 91).from_buffer(buf_sw_static_black)
 
-        # Pre-allocate black matrix frame row buffers for instant zero-allocation blackout
-        buf_black_rows = []
-        cbuf_black_rows = []
-        black_row_rgb = bytearray(66)
-        for row in range(6):
-            args_black_row = bytearray(71)
-            args_black_row[2] = row
-            args_black_row[3] = 0
-            args_black_row[4] = 21
-            args_black_row[5:5 + 66] = black_row_rgb
-            rep_black_row = _create_razer_report(0x0F, 0x03, 0x47, args_black_row, txn=0x1F)
-            buf_br = bytearray(91); buf_br[1:] = rep_black_row
-            buf_black_rows.append(buf_br)
-            cbuf_black_rows.append((ctypes.c_char * 91).from_buffer(buf_br))
+        # Pre-allocate 6 matrix row buffers with zero runtime memory allocations
+        row_bufs = []
+        cbuf_rows = []
+        for r in range(6):
+            buf = bytearray(91)
+            buf[1] = 0
+            buf[2] = 0x1F
+            buf[6] = 0x47
+            buf[7] = 0x0F
+            buf[8] = 0x03
+            buf[11] = r
+            buf[12] = 0
+            buf[13] = 21
+            row_bufs.append(buf)
+            cbuf_rows.append((ctypes.c_char * 91).from_buffer(buf))
+
+        # Pre-allocate mouse logo and scroll wheel illuminated buffers
+        buf_mouse_logo = bytearray(91)
+        cbuf_mouse_logo = (ctypes.c_char * 91).from_buffer(buf_mouse_logo)
+        buf_sw = bytearray(91)
+        cbuf_sw = (ctypes.c_char * 91).from_buffer(buf_sw)
 
         while self.running:
+            now_perf = time.perf_counter()
+            dt = max(0.005, min(0.05, now_perf - last_loop_time))
+            last_loop_time = now_perf
+
             try:
-                item = self.color_queue.get(timeout=0.030)
+                item = self.color_queue.get(timeout=0.010)
             except queue.Empty:
                 # Periodic keep-alive refresh during prolonged blackout (every 1.5s)
                 # Guarantees mouse and keyboard never reset to onboard default profile during extended silence
-                now = time.time()
-                if (now - last_refresh_time >= 1.5) and (last_sent_left == (0, 0, 0)) and (last_sent_right == (0, 0, 0)):
-                    last_refresh_time = now
+                now_t = time.time()
+                if (now_t - last_refresh_time >= 1.5) and was_kbd_blackout and was_mouse_blackout:
+                    last_refresh_time = now_t
                     with self.lock:
                         devs = list(self.devices)
                     for dev in devs:
@@ -453,7 +678,11 @@ class RazerChromaManager:
                 continue
 
             last_refresh_time = time.time()
-            c_left, c_right, strobe_cut = item
+            if len(item) == 6:
+                c_left, c_right, strobe_cut, audio_state, is_dual, vis_state = item
+            else:
+                c_left, c_right, strobe_cut = item[:3]
+                audio_state, is_dual, vis_state = None, False, None
 
             if strobe_cut:
                 b_left, b_right = c_left, c_right
@@ -462,75 +691,78 @@ class RazerChromaManager:
                 b_left = self._boost_peripheral_color(c_left, strobe_cut=False)
                 b_right = self._boost_peripheral_color(c_right, strobe_cut=False)
 
-            if b_left == last_sent_left and b_right == last_sent_right:
-                continue
-            last_sent_left = b_left
-            last_sent_right = b_right
-
             with self.lock:
                 devs = list(self.devices)
 
             if not devs or not self.enabled:
                 continue
 
-            is_kbd_blackout = (b_left == (0, 0, 0))
-            is_mouse_blackout = (b_right == (0, 0, 0))
+            # 1. Update Keyboard Matrix (Per-key / per-row dynamic lighting)
+            has_keyboard = any(d.device_type == "keyboard" for d in devs)
+            if has_keyboard:
+                matrix, is_kbd_blackout = self.matrix_engine.generate_matrix(
+                    dt, b_left, b_right, strobe_cut, audio_state=audio_state, is_dual=is_dual, vis_state=vis_state
+                )
 
-            # Send to hardware
-            for dev in devs:
-                try:
-                    if dev.device_type == "keyboard":
+                for dev in devs:
+                    if dev.device_type != "keyboard":
+                        continue
+                    try:
                         if is_kbd_blackout:
-                            # True hardware blackout: EFFECT_NONE + flush black custom matrix frame
-                            self.hid.HidD_SetFeature(dev.handle, cbuf_kbd_off, 91)
-                            for cbuf_row in cbuf_black_rows:
-                                self.hid.HidD_SetFeature(dev.handle, cbuf_row, 91)
-                            self.hid.HidD_SetFeature(dev.handle, cbuf_draw, 91)
+                            if not was_kbd_blackout:
+                                self.hid.HidD_SetFeature(dev.handle, cbuf_kbd_off, 91)
+                                was_kbd_blackout = True
+                                last_sent_row_bytes = [None] * 6
                         else:
-                            # Dual-layer hardware illumination:
-                            # Layer 1: Extended matrix static color report (0x0F, 0x02, 0x09)
-                            args_kbd = bytearray([0x00, 0x05, 0x01, 0x00, 0x00, 0x01, b_left[0], b_left[1], b_left[2]])
-                            rep_kbd = _create_razer_report(0x0F, 0x02, 0x09, args_kbd, txn=0x1F)
-                            buf_kbd = bytearray(91); buf_kbd[1:] = rep_kbd
-                            self.hid.HidD_SetFeature(dev.handle, (ctypes.c_char * 91).from_buffer(buf_kbd), 91)
+                            was_kbd_blackout = False
+                            has_drawn = False
+                            for r in range(6):
+                                r_bytes = matrix[r].tobytes()
+                                if r_bytes != last_sent_row_bytes[r]:
+                                    last_sent_row_bytes[r] = r_bytes
+                                    buf_r = row_bufs[r]
+                                    buf_r[14:80] = r_bytes
+                                    crc = 0
+                                    for i in range(3, 89):
+                                        crc ^= buf_r[i]
+                                    buf_r[89] = crc
+                                    self.hid.HidD_SetFeature(dev.handle, cbuf_rows[r], 91)
+                                    has_drawn = True
+                            if has_drawn:
+                                self.hid.HidD_SetFeature(dev.handle, cbuf_draw, 91)
+                    except Exception:
+                        pass
 
-                            # Layer 2: Custom matrix frame (0x0F, 0x03, 0x47) rows 0..5 + Draw Frame (0x0F, 0x02, 0x0C)
-                            row_rgb = bytearray([b_left[0], b_left[1], b_left[2]] * 22)
-                            for row in range(6):
-                                args_row = bytearray(71)
-                                args_row[2] = row
-                                args_row[3] = 0
-                                args_row[4] = 21
-                                args_row[5:5 + 66] = row_rgb
-                                rep_row = _create_razer_report(0x0F, 0x03, 0x47, args_row, txn=0x1F)
-                                buf_row = bytearray(91); buf_row[1:] = rep_row
-                                self.hid.HidD_SetFeature(dev.handle, (ctypes.c_char * 91).from_buffer(buf_row), 91)
-                            self.hid.HidD_SetFeature(dev.handle, cbuf_draw, 91)
-
-                    elif dev.device_type == "mouse":
+            # 2. Update Mouse & Other Peripherals
+            is_mouse_blackout = (b_right == (0, 0, 0))
+            for dev in devs:
+                if dev.device_type == "keyboard":
+                    continue
+                try:
+                    if dev.device_type == "mouse":
                         if is_mouse_blackout:
-                            # Direct static blackout on mouse hardware logo & scroll LED
-                            # Note: We do NOT send custom matrix frame draw (0x0F, 0x02, 0x0C) here because
-                            # mouse hardware watchdog will expire and revert to onboard rainbow profile!
-                            self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_static_black, 91)
-                            self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_off, 91)
-                            if getattr(dev, "has_scroll_wheel", False):
-                                self.hid.HidD_SetFeature(dev.handle, cbuf_sw_static_black, 91)
-                                self.hid.HidD_SetFeature(dev.handle, cbuf_sw_off, 91)
+                            if not was_mouse_blackout:
+                                self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_static_black, 91)
+                                self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_off, 91)
+                                if getattr(dev, "has_scroll_wheel", False):
+                                    self.hid.HidD_SetFeature(dev.handle, cbuf_sw_static_black, 91)
+                                    self.hid.HidD_SetFeature(dev.handle, cbuf_sw_off, 91)
+                                was_mouse_blackout = True
+                                last_sent_mouse_color = (0, 0, 0)
                         else:
-                            # Direct hardware static color illumination (NO_SAVE / volatile)
-                            args_mouse_logo = bytearray([0x00, 0x04, 0x01, 0x00, 0x00, 0x01, b_right[0], b_right[1], b_right[2]])
-                            rep_mouse_logo = _create_razer_report(0x0F, 0x02, 0x09, args_mouse_logo, txn=0x3F)
-                            buf_mouse_logo = bytearray(91); buf_mouse_logo[1:] = rep_mouse_logo
-                            self.hid.HidD_SetFeature(dev.handle, (ctypes.c_char * 91).from_buffer(buf_mouse_logo), 91)
+                            was_mouse_blackout = False
+                            if b_right != last_sent_mouse_color:
+                                last_sent_mouse_color = b_right
+                                rep_ml = _create_razer_report(0x0F, 0x02, 0x09, [0x00, 0x04, 0x01, 0x00, 0x00, 0x01, b_right[0], b_right[1], b_right[2]], txn=0x3F)
+                                buf_mouse_logo[1:] = rep_ml
+                                self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_logo, 91)
 
-                            if getattr(dev, "has_scroll_wheel", False):
-                                args_sw = bytearray([0x00, 0x01, 0x01, 0x00, 0x00, 0x01, b_right[0], b_right[1], b_right[2]])
-                                rep_sw = _create_razer_report(0x0F, 0x02, 0x09, args_sw, txn=0x3F)
-                                buf_sw = bytearray(91); buf_sw[1:] = rep_sw
-                                self.hid.HidD_SetFeature(dev.handle, (ctypes.c_char * 91).from_buffer(buf_sw), 91)
-
+                                if getattr(dev, "has_scroll_wheel", False):
+                                    rep_sw = _create_razer_report(0x0F, 0x02, 0x09, [0x00, 0x01, 0x01, 0x00, 0x00, 0x01, b_right[0], b_right[1], b_right[2]], txn=0x3F)
+                                    buf_sw[1:] = rep_sw
+                                    self.hid.HidD_SetFeature(dev.handle, cbuf_sw, 91)
                     else:
+                        # Mousepad / Headset generic fallback
                         if is_kbd_blackout:
                             self.hid.HidD_SetFeature(dev.handle, cbuf_kbd_off, 91)
                         else:

@@ -96,8 +96,8 @@ class VisualizerEngine:
         self.decay_rate = DEFAULT_DECAY_RATE
         self.safe_mode = False
 
-        # Overdrive / Crazy Mode (Default ON for extreme strobe intensity!)
-        self.overdrive_mode = True
+        # Overdrive / Crazy Mode (Default OFF for Smart Rhythm Mode, ON for Classic/Psycho modes)
+        self.overdrive_mode = (self.mode in (MODE_CLASSIC_RAPID, MODE_PSYCHO_OVERDRIVE))
 
         # Stroboscopic Multi-Pulse Burst Train Engine (Martin Atomic Strobe simulation)
         self.burst_remaining = 0
@@ -309,16 +309,24 @@ class VisualizerEngine:
             self.set_mode(MODE_BASS_ONLY)
             return True
 
+    def toggle_engine(self):
+        """Toggle active detection engine between Smart PLL and Classic Raw."""
+        return self.toggle_mode_2_0()
+
+    def toggle_smart_mode(self):
+        """Toggle Smart Rhythm mode / engine."""
+        return self.toggle_engine()
+
     def toggle_mode_2_0(self):
         """Toggle between Mode 2.0 (Smart Sync) and previous mode."""
         if self.is_mode_2_0_active():
-            prev_mode = getattr(self, "_prev_mode_before_2_0", MODE_PSYCHO_OVERDRIVE)
+            prev_mode = getattr(self, "_prev_mode_before_2_0", MODE_CLASSIC_RAPID)
             if prev_mode == MODE_STROBE_2_0:
-                prev_mode = MODE_PSYCHO_OVERDRIVE
+                prev_mode = MODE_CLASSIC_RAPID
             self.set_mode(prev_mode)
             return False
         else:
-            self._prev_mode_before_2_0 = self.mode if self.mode != MODE_STROBE_2_0 else MODE_PSYCHO_OVERDRIVE
+            self._prev_mode_before_2_0 = self.mode if self.mode != MODE_STROBE_2_0 else MODE_CLASSIC_RAPID
             self.set_mode(MODE_STROBE_2_0)
             return True
 

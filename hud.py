@@ -19,6 +19,7 @@ from config import (
     MIN_PREAMP_GAIN,
     MAX_PREAMP_GAIN,
     MODE_STROBE_2_0,
+    MODE_CLASSIC_RAPID,
     MODE_RED_ONLY,
     MODE_ALBUM_ART,
     PALETTE_ALBUM_ART,
@@ -263,7 +264,8 @@ class HUD:
         by_tog = panel_y + 216
 
         self.btn_overdrive = pygame.Rect(panel_x + pad_x, by_tog, bw_tog, btn_h)
-        self.btn_mode_2_0 = pygame.Rect(panel_x + pad_x + (bw_tog + gap_tog), by_tog, bw_tog, btn_h)
+        self.btn_engine = pygame.Rect(panel_x + pad_x + (bw_tog + gap_tog), by_tog, bw_tog, btn_h)
+        self.btn_mode_2_0 = self.btn_engine
         self.btn_album_art = pygame.Rect(panel_x + pad_x + (bw_tog + gap_tog) * 2, by_tog, bw_tog, btn_h)
         self.btn_safe = pygame.Rect(panel_x + pad_x + (bw_tog + gap_tog) * 3, by_tog, bw_tog, btn_h)
         self.btn_razer = pygame.Rect(panel_x + pad_x + (bw_tog + gap_tog) * 4, by_tog, bw_tog, btn_h)
@@ -528,7 +530,7 @@ class HUD:
         # -----------------------------------------------------------------
         # 5. Quick Toggles & Hardware Pods
         # -----------------------------------------------------------------
-        if hasattr(self, "btn_mode_2_0") and self.btn_mode_2_0.collidepoint(pos):
+        if (hasattr(self, "btn_engine") and self.btn_engine.collidepoint(pos)) or (hasattr(self, "btn_mode_2_0") and self.btn_mode_2_0.collidepoint(pos)):
             if visualizer:
                 visualizer.toggle_mode_2_0()
             return True
@@ -652,11 +654,16 @@ class HUD:
             pill_text = "ALBUM ART SYNC"
             pill_col = (0, 240, 255)
             pill_bg = (12, 38, 52)
-        elif visualizer.is_mode_2_0_active():
-            accent_col = (255, 60, 180)
-            pill_text = "STROBE 2.0"
-            pill_col = (255, 60, 180)
-            pill_bg = (42, 14, 36)
+        elif visualizer.mode == MODE_CLASSIC_RAPID:
+            accent_col = (255, 140, 20)
+            pill_text = "CLASSIC RAW"
+            pill_col = (255, 140, 20)
+            pill_bg = (48, 24, 12)
+        elif visualizer.is_mode_2_0_active() or (hasattr(visualizer, "is_smart_mode_active") and visualizer.is_smart_mode_active()):
+            accent_col = (0, 240, 255)
+            pill_text = "SMART PLL"
+            pill_col = (0, 240, 255)
+            pill_bg = (12, 38, 52)
         elif visualizer.mode == MODE_RED_ONLY:
             accent_col = (255, 30, 45)
             pill_text = "RED ONLY"
@@ -1173,12 +1180,37 @@ class HUD:
         self._render_button(hud_surf, self.btn_overdrive, "Overdrive",
                             ovr_bg, ovr_border, alpha_int, has_pip=True, pip_active=ovr_active, pip_col=(255, 60, 45))
 
-        # 6.2 Strobe 2.0 Smart Sync Toggle
-        mode_2_0_active = visualizer.is_mode_2_0_active() if visualizer else False
-        mode_2_0_bg = (48, 14, 38) if mode_2_0_active else (18, 24, 38)
-        mode_2_0_border = (255, 40, 180) if mode_2_0_active else (85, 55, 105)
-        self._render_button(hud_surf, self.btn_mode_2_0, "Strobe 2.0",
-                            mode_2_0_bg, mode_2_0_border, alpha_int, has_pip=True, pip_active=mode_2_0_active, pip_col=(255, 40, 180))
+        # 6.2 Active Detection Engine Indicator / Toggle (Replaces old Strobe 2.0 toggle)
+        eng_label = "ENG: SMART PLL"
+        eng_pip_col = (0, 240, 255)
+        eng_bg = (12, 36, 52)
+        eng_border = (0, 240, 255)
+
+        if visualizer and visualizer.overdrive_mode:
+            eng_label = "ENG: OVERDRIVE"
+            eng_pip_col = (255, 60, 45)
+            eng_bg = (60, 18, 22)
+            eng_border = (255, 60, 45)
+        elif visualizer and visualizer.is_solid_color_active():
+            eng_label = "ENG: SOLID"
+            eng_pip_col = (255, 200, 50)
+            eng_bg = (50, 40, 15)
+            eng_border = (255, 200, 50)
+        elif visualizer and visualizer.mode == MODE_CLASSIC_RAPID:
+            eng_label = "ENG: CLASSIC"
+            eng_pip_col = (255, 140, 20)
+            eng_bg = (48, 24, 12)
+            eng_border = (255, 140, 20)
+        elif visualizer and visualizer.is_smart_mode_active():
+            eng_label = "ENG: SMART PLL"
+            eng_pip_col = (0, 240, 255)
+            eng_bg = (12, 36, 52)
+            eng_border = (0, 240, 255)
+
+        btn_eng = getattr(self, "btn_engine", getattr(self, "btn_mode_2_0", None))
+        if btn_eng:
+            self._render_button(hud_surf, btn_eng, eng_label,
+                                eng_bg, eng_border, alpha_int, has_pip=True, pip_active=True, pip_col=eng_pip_col)
 
         # 6.3 Album Cover Art Sync Toggle
         art_active = visualizer.is_album_art_active() if visualizer else False

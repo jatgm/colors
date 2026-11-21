@@ -182,8 +182,11 @@ class BeatStrobeApp:
                             # Toggle Bass Only Mode (Sub-Bass & Kick Strobe)
                             self.visualizer.toggle_bass_only()
                         elif event.key in (pygame.K_2, pygame.K_w):
-                            # Toggle Mode 2.0 (Smart Sync)
-                            self.visualizer.toggle_mode_2_0()
+                            # Toggle Active Detection Engine (Smart PLL vs Classic Raw)
+                            if hasattr(self.visualizer, "toggle_engine"):
+                                self.visualizer.toggle_engine()
+                            else:
+                                self.visualizer.toggle_mode_2_0()
                         elif event.key in (pygame.K_3, pygame.K_e):
                             # Toggle Classic Rapid Strobe Mode (How it was before)
                             self.visualizer.toggle_classic_rapid()
@@ -380,7 +383,10 @@ class BeatStrobeApp:
                 # 5. Razer Chroma, HappyLighting & Lenovo Legion Hardware Sync
                 # Synchronize keyboard, mouse, room strips, and gaming PC RGB with explosive beat flashes and blackouts
                 col_left, col_right, is_strobe = self.visualizer.get_peripheral_colors()
-                self.razer_mgr.set_colors(col_left, col_right, strobe_cut=is_strobe)
+                self.razer_mgr.set_colors(
+                    col_left, col_right, strobe_cut=is_strobe,
+                    audio_state=audio_state, is_dual=self.is_dual, visualizer=self.visualizer
+                )
                 self.happylighting_mgr.set_colors(
                     col_left, col_right, strobe_cut=is_strobe, flash_id=self.visualizer.peripheral_flash_id
                 )

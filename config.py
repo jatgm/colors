@@ -19,8 +19,8 @@ HIGH_FREQ_RANGE = (2800, 7500)
 HIHAT_FREQ_RANGE = (7500, 16000)
 
 # Strobe Modes
-MODE_STROBE_2_0 = "[2.0] Strobe 2.0 (Smart Sync)"
-MODE_SMART_RHYTHM = MODE_STROBE_2_0
+MODE_SMART_RHYTHM = "[SMART] Smart Rhythm (PLL Sync)"
+MODE_STROBE_2_0 = MODE_SMART_RHYTHM  # Legacy alias
 MODE_CLASSIC_RAPID = "[CLASSIC] Classic Rapid Strobe"
 MODE_PSYCHO_OVERDRIVE = "[OVR] Psycho Overdrive (Ultra)"
 MODE_RED_ONLY = "[RED] Red Only"

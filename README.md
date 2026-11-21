@@ -102,37 +102,61 @@ The program automatically detects all connected monitors (e.g. two 1920x1080 mon
 
 ---
 
-## Strobe Modes (Press M to Cycle)
+## Detection Engines: Smart Rhythm PLL vs. Classic Rapid
 
-1. **Strobe 2.0 (Smart Sync)**: Intelligent musical structure tracking (verse, buildup, chorus drops) with melody pitch progression and heavy 808 / snare emphasis.
-2. **Psycho Overdrive (Ultra)**: Stroboscopic burst trains, rapid complementary neon flips, hi-hat sparkles, and drop blitzes.
-3. **Red Only (Pure Red Strobe)**: High-intensity pure red strobe flashes (RGB 255, 0, 0) on every beat with absolute pitch-black cutoffs between strikes.
-4. **Bass Only (Pure Low-End Strobe)**: Strictly reacts to kicks, 808s, and heavy sub-bass beats with absolute blackouts between hits (completely ignores snares, hi-hats, mids, and vocals).
-5. **Cover Art Sync**: Real-time sync with dominant colors extracted from Windows Media playback album covers.
-6. **Machine-Gun Multi-Band**: Kicks, snares, and hi-hats excite independent strobe layers simultaneously.
-7. **Hyper Strobe Blitz**: High-frequency concert strobe simulation with instantaneous blackouts.
-8. **Hard Strobe (Classic Rave)**: Instant high-intensity color flash on every kick beat, decaying rapidly to pitch black.
-9. **Kick + Snare Dual**: Bass kick fires primary palette color; snare/clap fires a bright lightning-white accent strobe.
-10. **Smooth Rave Pulse**: Sinusoidal ambient glow that pulses gently with the music without harsh flickers.
-11. **Audio Reactive Spectrum**: Real-time continuous color synthesis based on live audio frequencies.
-12. **Chaos Blitz**: High-energy randomized neon color bursts on every transient drop.
-13. **Monochrome Blitz**: Pure high-contrast black and white strobe flashes.
+Beat Strobe provides two distinct, switchable audio detection architectures:
+
+### 1. Smart Rhythm Engine (Default: Phase-Locked Loop Grid & Bayesian Prior)
+- **Phase-Locked Loop (PLL) Tempo Grid**: Internal rhythm oscillator locks phase and frequency to the musical tempo grid (quarter notes, eighths, sixteenths), predicting exactly when downbeats land.
+- **Bayesian Prior Expectation**: When an audio burst arrives on-grid, threshold sensitivity is lowered, rewarding rhythmic consistency and filtering out off-beat chatter or random noise.
+- **808 Attack Transient vs Sustain Tail Isolation**: Detects the sharp initial strike of an 808 sub-bass kick without re-triggering 10 to 15 false flashes during the rumbling bass tail decay.
+- **Snare and Clap Backbeat Prior**: Dedicated frequency detection for snares (200-500 Hz) and claps (1000-3000 Hz) that align on backbeats (beats 2 and 4), producing high-contrast secondary accent flashes.
+- **Live HUD Engine Status Badge**: Displays `ENG: SMART PLL` with glowing cyan status pip. Clicking the badge or pressing **`2`** toggles between Smart PLL and Classic engines.
+
+### 2. Classic Rapid Strobe Engine (Hotkey 3 or E)
+- **100% Unconstrained Raw Strobe**: Preserves the ultra-rapid, instantaneous peak detection mode from previous versions.
+- **Instant Micro-Transient Reaction**: Fires immediate flashes on any raw amplitude peak exceeding threshold without tempo locking or prior quantization.
+- **Live HUD Engine Status Badge**: Displays `ENG: CLASSIC` with bright orange status pip.
 
 ---
 
-## Razer Chroma Hardware RGB Lighting (Hotkey C)
+## Razer Chroma Keyboard Per-Key RGB Matrix Engine (Hotkey C)
 
-Beat Strobe connects directly to connected Razer Keyboards and Mice to flash and strobe their RGB lighting in real-time synchronization with the screen:
+Beat Strobe connects directly to connected Razer Keyboards and Mice to drive custom 6x22 per-key matrix animations and strobe lighting in real-time synchronization with the screen:
 
 - **Zero-Dependency Native Control**: Communicates directly through Windows native `hid.dll` and `setupapi.dll` using custom 90-byte Razer HID feature reports without requiring Synapse or third-party SDKs.
 - **Supported Hardware**:
-  - **Keyboards**: Razer Ornata V2, BlackWidow series, Huntsman series, Cynosa, DeathStalker, etc.
-  - **Mice**: Razer Viper series, DeathAdder series, Basilisk series, Cobra, Naga, etc.
+  - **Keyboards**: Razer Ornata V2, BlackWidow series, Huntsman series, Cynosa, DeathStalker, etc. (Full 6-row x 22-column addressable key matrix).
+  - **Mice**: Razer Viper series, DeathAdder series, Basilisk series, Cobra, Naga, etc. (Logo and scroll wheel lighting).
   - **Accessories**: Firefly mousepads, Chroma headsets, and ARGB controllers.
-- **Dual-Monitor Channel Splitting**:
-  - In **Dual Synced** mode, both keyboard and mouse strobe the exact same colors as the screens.
-  - In **Ping-Pong Alternating** or **Complementary Contrast** modes, the keyboard maps to the Left monitor and the mouse maps to the Right monitor, creating a physical light show where beats bounce between monitors, keyboard, and mouse.
-- **Asynchronous Sub-Millisecond USB Dispatch**: Non-blocking background worker thread guarantees zero frame drops or lag on high-refresh-rate screen strobing.
+- **Per-Key & Per-Row Matrix Animations**:
+  - **Function Row Real-Time EQ Spectrum Analyzer (Row 0: Esc through Pause)**: Maps live audio frequency energy across all 22 columns of the function key row, creating an animated equalizer directly on your keyboard keycaps.
+  - **Spacebar Kick & 808 Radial Shockwaves**: On every kick or drop, an explosive radial shockwave detonates from the Spacebar (Row 5, Col 8) and ripples outward across rows 4, 3, 2, 1, 0, leaving an afterglow trailing towards the screen.
+  - **Snare / Clap Lateral Accent Wave**: Horizontal sweeps burst outward across typing rows 2, 3, 4 with high-contrast secondary accent hues.
+  - **Hi-Hat Micro-Sparkles**: Dynamic diamond-white keycap sparkles dancing across the number and QWERTY rows on cymbal transients.
+  - **Spatial Dual-Monitor Screen Matching**: In dual monitor mode, keyboard columns 0-10 track the Left monitor and room BLE lights, while columns 11-21 track the Right monitor and mouse.
+  - **Instant Zero-Lag Blackout Cut**: Instantaneous hardware blackout report (<0.5ms) synchronized with visualizer strobe cuts.
+  - **Static Solid Color Illumination**: In solid color mode, all 132 keys continuously illuminate in the selected solid color without strobing.
+- **Sub-Millisecond Non-Blocking USB HID Performance**: Pre-allocated ctypes buffers with in-place byte writes, transmitting only changed rows for smooth, stutter-free 60-90 FPS hardware updates.
+
+---
+
+## Strobe Modes (Press M to Cycle)
+
+1. **Smart Rhythm (PLL Sync)**: Intelligent tempo grid tracking, 808 transient isolation, melody progression, and musical downbeat synchronization.
+2. **Classic Rapid Strobe**: Raw unconstrained rapid-fire strobe matching original instant peak triggering.
+3. **Psycho Overdrive (Ultra)**: Stroboscopic burst trains, rapid complementary neon flips, hi-hat sparkles, and drop blitzes.
+4. **Red Only (Pure Red Strobe)**: High-intensity pure red strobe flashes (RGB 255, 0, 0) on every beat with absolute pitch-black cutoffs between strikes.
+5. **Bass Only (Pure Low-End Strobe)**: Strictly reacts to kicks, 808s, and heavy sub-bass beats with absolute blackouts between hits (completely ignores snares, hi-hats, mids, and vocals).
+6. **Cover Art Sync**: Real-time sync with dominant colors extracted from Windows Media playback album covers.
+7. **Machine-Gun Multi-Band**: Kicks, snares, and hi-hats excite independent strobe layers simultaneously.
+8. **Hyper Strobe Blitz**: High-frequency concert strobe simulation with instantaneous blackouts.
+9. **Hard Strobe (Classic Rave)**: Instant high-intensity color flash on every kick beat, decaying rapidly to pitch black.
+10. **Kick + Snare Dual**: Bass kick fires primary palette color; snare/clap fires a bright lightning-white accent strobe.
+11. **Smooth Rave Pulse**: Sinusoidal ambient glow that pulses gently with the music without harsh flickers.
+12. **Audio Reactive Spectrum**: Real-time continuous color synthesis based on live audio frequencies.
+13. **Chaos Blitz**: High-energy randomized neon color bursts on every transient drop.
+14. **Monochrome Blitz**: Pure high-contrast black and white strobe flashes.
 
 ---
 
@@ -166,12 +190,13 @@ Beat Strobe includes a dedicated static lighting system that transforms displays
 | Key | Action | Description |
 | :--- | :--- | :--- |
 | **`ESC`** | **Exit / Close Modal** | Closes active modal or exits the application safely. |
-| **`O`**, **`4`**, or **`Z`** | **Toggle Solid Color Lighting** | Toggles between static room illumination and music-reactive strobing. |
+| **`5`**, **`O`**, or **`Z`** | **Toggle Solid Color Lighting** | Toggles between static room illumination and music-reactive strobing. |
 | **`1`** or **`Q`** | **Toggle Bass Only Mode** | Toggles pure bass strobe (only reacts to kicks, 808s, and sub-bass). |
-| **`2`** or **`W`** | **Toggle Strobe 2.0** | Toggles smart section tracking (verse/buildup/chorus) and melody sync. |
-| **`3`** or **`R`** | **Toggle Red Only Mode** | Toggles pure crimson red strobe flashes on all beats. |
+| **`2`** or **`W`** | **Toggle Engine (Smart vs Classic)** | Toggles between Smart Rhythm (PLL Grid) and Classic Raw strobe engines. |
+| **`3`** or **`E`** | **Toggle Classic Rapid Strobe** | Toggles Classic Rapid Strobe mode (unconstrained raw peak triggering). |
+| **`4`** or **`R`** | **Toggle Red Only Mode** | Toggles pure crimson red strobe flashes on all beats. |
 | **`A`** | **Toggle Album Art Mode** | Toggles strobe mode & palette sync to currently playing album cover art. |
-| **`X`** | **Toggle CRAZY MODE** | Instantly toggles Crazy Overdrive strobe on/off. |
+| **`X`** | **Toggle CRAZY OVERDRIVE** | Instantly toggles Crazy Overdrive strobe on/off. |
 | **`C`** | **Toggle Razer Chroma** | Toggles hardware RGB lighting sync for Razer keyboards & mice. |
 | **`L`** | **Toggle Room Lights** | Toggles Bluetooth BLE room light strip synchronization (HappyLighting). |
 | **`K`** | **Toggle Legion PC RGB** | Toggles Lenovo Legion gaming desktop PC RGB lighting. |

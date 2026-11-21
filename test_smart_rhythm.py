@@ -11,8 +11,10 @@ from config import (
     SAMPLE_RATE,
     CHUNK_SIZE,
     MODE_STROBE_2_0,
+    MODE_CLASSIC_RAPID,
     MODE_BASS_ONLY,
     MODE_ALBUM_ART,
+    STROBE_MODES,
 )
 from beat_detector import BeatDetector
 from visualizer import VisualizerEngine
@@ -102,6 +104,41 @@ class TestSmartRhythmEngine(unittest.TestCase):
         res_snare = bd.process_audio(snare_hit)
         self.assertTrue(res_snare["is_snare"], "Crisp snare hit should trigger snare beat")
         self.assertFalse(res_snare["is_808"], "Pure snare should not trigger 808 flag")
+
+    def test_classic_rapid_mode_preserves_before_behavior(self):
+        """Verify MODE_CLASSIC_RAPID preserves the raw, unconstrained rapid fire mode from before."""
+        self.assertIn(MODE_CLASSIC_RAPID, STROBE_MODES)
+        self.assertIn(MODE_STROBE_2_0, STROBE_MODES)
+
+        vis = VisualizerEngine(1280, 720)
+        vis.set_mode(MODE_CLASSIC_RAPID)
+        self.assertTrue(vis.is_classic_rapid_active())
+        self.assertTrue(vis.overdrive_mode, "Classic mode should run with overdrive / rapid mode active")
+
+        # Test beat detector behavior in classic mode (smart_mode=False)
+        bd = BeatDetector(sample_rate=SAMPLE_RATE, chunk_size=CHUNK_SIZE)
+        bd.set_smart_mode(False)
+        bd.set_overdrive(True)
+        self.assertFalse(bd.smart_mode)
+        self.assertTrue(bd.overdrive_mode)
+
+    def test_toggle_classic_rapid(self):
+        """Verify toggling Classic Rapid mode switches into and out of MODE_CLASSIC_RAPID."""
+        vis = VisualizerEngine(1280, 720)
+        vis.set_mode(MODE_STROBE_2_0)
+        self.assertFalse(vis.is_classic_rapid_active())
+
+        # Toggle on
+        toggled = vis.toggle_classic_rapid()
+        self.assertTrue(toggled)
+        self.assertEqual(vis.mode, MODE_CLASSIC_RAPID)
+        self.assertTrue(vis.is_classic_rapid_active())
+
+        # Toggle off
+        toggled_off = vis.toggle_classic_rapid()
+        self.assertFalse(toggled_off)
+        self.assertEqual(vis.mode, MODE_STROBE_2_0)
+        self.assertFalse(vis.is_classic_rapid_active())
 
 
 class TestHUDLayoutFixes(unittest.TestCase):

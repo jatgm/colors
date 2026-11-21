@@ -88,6 +88,9 @@ class BeatDetector:
         # Overdrive / Crazy Mode toggle (Smart Rhythmic Mode default)
         self.overdrive_mode = False
 
+        # Smart Rhythm Mode (PLL Grid & Transient Isolation) vs Classic Rapid Strobe (How it was before)
+        self.smart_mode = True
+
         # Phase-Locked Loop (PLL) & Intelligent Rhythm Grid
         self.last_grid_anchor = 0.0
         self.beat_phase = 0.0
@@ -181,6 +184,9 @@ class BeatDetector:
 
     def set_overdrive(self, enabled):
         self.overdrive_mode = bool(enabled)
+
+    def set_smart_mode(self, enabled):
+        self.smart_mode = bool(enabled)
 
     def process_audio(self, audio_data):
         now = time.time()
@@ -320,8 +326,10 @@ class BeatDetector:
         self.prev_hfc = hfc_val
         self.hfc_history.append(hfc_flux)
 
+        is_smart_active = bool(self.smart_mode and not self.overdrive_mode)
+
         # Phase-Locked Loop (PLL) & Intelligent Rhythm Grid Expectation
-        if self.estimated_bpm > 45.0 and self.bpm_confidence > 0.20:
+        if is_smart_active and self.estimated_bpm > 45.0 and self.bpm_confidence > 0.20:
             beat_period = 60.0 / self.estimated_bpm
             if self.last_grid_anchor == 0.0:
                 self.last_grid_anchor = now
@@ -337,18 +345,15 @@ class BeatDetector:
             self.is_on_grid_downbeat = (dist_downbeat < 0.12)
             self.is_on_grid_backbeat = (dist_backbeat < 0.10)
 
-            if self.overdrive_mode:
-                grid_mult = 1.0
+            if self.is_on_grid_downbeat:
+                grid_mult = 0.85
+            elif self.is_on_grid_backbeat:
+                grid_mult = 0.92
+            elif dist_16th < 0.08:
+                grid_mult = 1.05
             else:
-                if self.is_on_grid_downbeat:
-                    grid_mult = 0.85
-                elif self.is_on_grid_backbeat:
-                    grid_mult = 0.92
-                elif dist_16th < 0.08:
-                    grid_mult = 1.05
-                else:
-                    dead_zone_ratio = min(1.0, (dist_grid - 0.08) / 0.12)
-                    grid_mult = 1.0 + 0.60 * dead_zone_ratio * self.bpm_confidence
+                dead_zone_ratio = min(1.0, (dist_grid - 0.08) / 0.12)
+                grid_mult = 1.0 + 0.60 * dead_zone_ratio * self.bpm_confidence
         else:
             self.beat_phase = 0.0
             self.is_on_grid_downbeat = True
@@ -356,13 +361,8 @@ class BeatDetector:
             grid_mult = 1.0
             beat_period = 0.50
 
-        # Cooldowns and Threshold multipliers based on Smart vs Overdrive
-        if self.overdrive_mode:
-            k_cd = OVERDRIVE_KICK_COOLDOWN
-            s_cd = OVERDRIVE_SNARE_COOLDOWN
-            h_cd = OVERDRIVE_HIHAT_COOLDOWN
-            base_mult = 1.05 / max(0.1, self.user_sensitivity)
-        else:
+        # Cooldowns and Threshold multipliers based on Smart vs Classic / Overdrive
+        if is_smart_active:
             if self.estimated_bpm > 45.0:
                 k_cd = max(0.12, min(0.24, beat_period * 0.40))
                 s_cd = max(0.10, min(0.20, beat_period * 0.36))
@@ -372,15 +372,32 @@ class BeatDetector:
                 s_cd = 0.11
                 h_cd = 0.07
             base_mult = 1.50 / max(0.1, self.user_sensitivity)
+            gate = 0.024
+            sub_gate = 0.022
+        elif self.overdrive_mode:
+            k_cd = OVERDRIVE_KICK_COOLDOWN
+            s_cd = OVERDRIVE_SNARE_COOLDOWN
+            h_cd = OVERDRIVE_HIHAT_COOLDOWN
+            base_mult = 1.05 / max(0.1, self.user_sensitivity)
+            gate = 0.015
+            sub_gate = 0.014
+        else:
+            # Classic Rapid Strobe (How it was before)
+            k_cd = KICK_COOLDOWN
+            s_cd = SNARE_COOLDOWN
+            h_cd = HIHAT_COOLDOWN
+            base_mult = 1.55 / max(0.1, self.user_sensitivity)
+            gate = 0.025
+            sub_gate = 0.022
 
         # 6. Dynamic Threshold for Kick (Punch) & 808 Sub-Bass
         is_kick_beat = False
         is_808 = False
 
-        # 808 Attack Transient vs Sustain Resonance Separation
+        # 808 Attack Transient vs Sustain Resonance Separation (Smart Mode only)
         mean_hfc = float(np.mean(self.hfc_history)) if len(self.hfc_history) >= 4 else 0.0
         dynamic_thresh_estimate = float(np.mean(self.bass_flux_history)) if len(self.bass_flux_history) >= 4 else 0.02
-        if (now - self.last_808_time < 0.20) and not self.overdrive_mode:
+        if is_smart_active and (now - self.last_808_time < 0.20):
             is_attack_transient = (bass_flux > dynamic_thresh_estimate * 1.35 or hfc_flux > mean_hfc * 1.4)
         else:
             is_attack_transient = True
@@ -391,13 +408,11 @@ class BeatDetector:
             bass_mean = float(np.mean(self.bass_energy_history))
 
             dynamic_thresh = flux_mean + (base_mult * 0.55 * grid_mult) * flux_std
-            # In normalized AGC space, floor is clean
-            gate = 0.015 if self.overdrive_mode else 0.024
 
             if (
                 bass_flux > dynamic_thresh
                 and curr_bass > gate
-                and curr_bass > (bass_mean * (1.02 if self.overdrive_mode else 1.05))
+                and curr_bass > (bass_mean * (1.02 if (self.overdrive_mode or not is_smart_active) else 1.05))
                 and (now - self.last_kick_time >= k_cd)
                 and is_attack_transient
             ):
@@ -408,7 +423,6 @@ class BeatDetector:
             sub_mean = float(np.mean(self.sub_flux_history))
             sub_std = float(np.std(self.sub_flux_history))
             sub_thresh = sub_mean + (base_mult * 0.52 * grid_mult) * sub_std
-            sub_gate = 0.014 if self.overdrive_mode else 0.022
 
             if (
                 sub_flux > sub_thresh
@@ -423,30 +437,30 @@ class BeatDetector:
         if is_kick_beat:
             self.last_kick_time = now
             self._update_bpm(now)
-            if self.estimated_bpm > 45.0 and self.bpm_confidence > 0.20:
+            if is_smart_active and self.estimated_bpm > 45.0 and self.bpm_confidence > 0.20:
                 T_beat = 60.0 / self.estimated_bpm
                 offset = (now - self.last_grid_anchor) % T_beat
                 if offset < T_beat * 0.35:
                     self.last_grid_anchor = now - (offset * 0.25)
-                elif offset > T_beat * 0.65:
+                elif offset > T_beat * 0.6:
                     self.last_grid_anchor = now - (offset * 0.25)
             else:
                 self.last_grid_anchor = now
 
-        # 7. Dynamic Threshold for Snare (Mid-High percussive snap with low sub-bass bleed)
+        # 7. Dynamic Threshold for Snare
         is_snare_beat = False
         if len(self.high_flux_history) >= 8:
             high_mean = float(np.mean(self.high_flux_history))
             high_std = float(np.std(self.high_flux_history))
-            snare_grid_factor = 0.88 if self.is_on_grid_backbeat else 1.15
-            high_thresh = high_mean + (base_mult * 0.65 * (1.0 if self.overdrive_mode else snare_grid_factor)) * high_std
+            snare_grid_factor = 0.88 if (is_smart_active and self.is_on_grid_backbeat) else (1.0 if not is_smart_active else 1.15)
+            high_thresh = high_mean + (base_mult * 0.65 * snare_grid_factor) * high_std
 
-            is_pure_snare = (curr_sub_bass < 0.16 or curr_high > curr_sub_bass * 0.75)
+            is_pure_snare = (curr_sub_bass < 0.16 or curr_high > curr_sub_bass * 0.75) if is_smart_active else True
             if (
                 high_flux > high_thresh
                 and curr_high > 0.012
                 and (now - self.last_snare_time >= s_cd)
-                and (is_pure_snare or self.overdrive_mode)
+                and is_pure_snare
             ):
                 is_snare_beat = True
                 self.last_snare_time = now

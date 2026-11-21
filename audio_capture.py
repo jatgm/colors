@@ -286,6 +286,10 @@ class AudioCaptureManager:
         with self.lock:
             self.latest_state["overdrive"] = enabled
 
+    def set_smart_mode(self, enabled):
+        if hasattr(self, "detector") and self.detector:
+            self.detector.set_smart_mode(enabled)
+
     def set_timeline_context(self, progress, duration=0.0, is_playing=True):
         """Provide Spotify/OS media timeline context to calibrate song section priors."""
         if hasattr(self, "detector") and self.detector:

@@ -1265,7 +1265,7 @@ class HUD:
         self._render_button(hud_surf, self.btn_sync, sync_label, sync_bg, sync_border, alpha_int)
 
         # 7. Minimal Clean Footer Navigation Strip
-        hints = "ESC Close Menu/Exit   1 Bass   2 Smart   X Overdrive   A Album   O Solid   P Palette   TAB Hide HUD"
+        hints = "ESC Close Menu/Exit   1 Bass   2 Smart   3 Classic   X Overdrive   A Album   O Solid   P Palette   TAB Hide HUD"
         hint_surf = self.font_tiny.render(hints, True, (120, 138, 165))
         hud_surf.blit(hint_surf, (panel.x + (panel.width - hint_surf.get_width()) // 2, panel.bottom - 16))
 

@@ -15,6 +15,8 @@ from config import (
     PALETTE_NAMES,
     PALETTE_ALBUM_ART,
     MODE_STROBE_2_0,
+    MODE_SMART_RHYTHM,
+    MODE_CLASSIC_RAPID,
     MODE_PSYCHO_OVERDRIVE,
     MODE_RED_ONLY,
     MODE_BASS_ONLY,
@@ -171,12 +173,38 @@ class VisualizerEngine:
             self.mode = mode_name
             self.mode_index = STROBE_MODES.index(mode_name)
             self.solid_color_active = False
-            if self.mode == MODE_ALBUM_ART:
+            if self.mode in (MODE_CLASSIC_RAPID, MODE_PSYCHO_OVERDRIVE):
+                self.overdrive_mode = True
+                self.decay_rate = max(24.0, self.decay_rate)
+            elif self.mode == MODE_STROBE_2_0:
+                self.overdrive_mode = False
+            elif self.mode == MODE_ALBUM_ART:
                 self.set_palette(PALETTE_ALBUM_ART)
             elif self.mode == MODE_RED_ONLY:
                 self.current_color = (255, 0, 0)
                 self.secondary_color = (255, 0, 0)
         return self.mode
+
+    def is_classic_rapid_active(self):
+        """Return True if Classic Rapid Strobe mode (how it was before) is active."""
+        return self.mode == MODE_CLASSIC_RAPID
+
+    def is_smart_mode_active(self):
+        """Return True if Smart Rhythm (Strobe 2.0) mode is active."""
+        return (self.mode == MODE_STROBE_2_0) and not self.overdrive_mode
+
+    def toggle_classic_rapid(self):
+        """Toggle between Classic Rapid Mode (how it was before) and Smart mode."""
+        if self.is_classic_rapid_active():
+            prev_mode = getattr(self, "_prev_mode_before_classic", MODE_STROBE_2_0)
+            if prev_mode == MODE_CLASSIC_RAPID:
+                prev_mode = MODE_STROBE_2_0
+            self.set_mode(prev_mode)
+            return False
+        else:
+            self._prev_mode_before_classic = self.mode if self.mode != MODE_CLASSIC_RAPID else MODE_STROBE_2_0
+            self.set_mode(MODE_CLASSIC_RAPID)
+            return True
 
     def is_solid_color_active(self):
         """Return True if static solid color override lighting is currently active."""
@@ -624,14 +652,14 @@ class VisualizerEngine:
         self.shockwave_radius = 0.0
         self.shockwave_active = True
 
-        # In Overdrive, Strobe Blitz, or Album Art modes, launch machine-gun multi-flash burst
-        if self.overdrive_mode or self.mode in (MODE_PSYCHO_OVERDRIVE, MODE_STROBE_BLITZ, MODE_ALBUM_ART):
+        # In Overdrive, Classic Rapid, Strobe Blitz, or Album Art modes, launch machine-gun multi-flash burst
+        if self.overdrive_mode or self.mode in (MODE_CLASSIC_RAPID, MODE_PSYCHO_OVERDRIVE, MODE_STROBE_BLITZ, MODE_ALBUM_ART):
             self.burst_remaining = 3  # Fire 3 rapid strobe micro-flashes per kick
             self.burst_timer = 0.0
             self.burst_is_on = True
 
         # Screen impact shake on heavy kicks
-        if self.overdrive_mode or self.mode in (MODE_STROBE_2_0, MODE_BASS_ONLY):
+        if self.overdrive_mode or self.mode in (MODE_CLASSIC_RAPID, MODE_STROBE_2_0, MODE_BASS_ONLY):
             self.shake_decay = 0.16 if (self.mode == MODE_STROBE_2_0 and getattr(self, "is_chorus_active", False)) else 0.12
             self.shake_x = random.randint(-10, 10) if (self.mode == MODE_STROBE_2_0 and getattr(self, "is_chorus_active", False)) else random.randint(-8, 8)
             self.shake_y = random.randint(-8, 8) if (self.mode == MODE_STROBE_2_0 and getattr(self, "is_chorus_active", False)) else random.randint(-6, 6)
@@ -931,14 +959,14 @@ class VisualizerEngine:
 
         # Strobe pulse gating (chopping for stroboscopic effect)
         chopped_intensity = intensity
-        if (self.overdrive_mode or self.mode in (MODE_STROBE_BLITZ, MODE_ALBUM_ART)) and not self.safe_mode:
+        if (self.overdrive_mode or self.mode in (MODE_CLASSIC_RAPID, MODE_STROBE_BLITZ, MODE_ALBUM_ART)) and not self.safe_mode:
             if self.burst_remaining > 0 and not self.burst_is_on:
                 chopped_intensity = 0.0  # Instant blackout between burst micro-flashes!
 
         if self.safe_mode or self.mode == MODE_SMOOTH_PULSE:
             eff_intensity = math.sin(min(1.0, 0.20 + ambient_floor * 0.40 + chopped_intensity * 0.80) * (math.pi / 2))
-        elif self.mode == MODE_PSYCHO_OVERDRIVE:
-            # Overdrive blast: explosive flash with true pitch black between beat impacts
+        elif self.mode in (MODE_CLASSIC_RAPID, MODE_PSYCHO_OVERDRIVE):
+            # Classic rapid / overdrive blast: explosive flash with true pitch black between beat impacts
             if chopped_intensity > 0.01:
                 eff_intensity = min(1.0, chopped_intensity * 1.35)
             else:

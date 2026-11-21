@@ -18,6 +18,9 @@ from config import (
     MAX_PREAMP_GAIN,
     MODE_SMOOTH_PULSE,
     MODE_ALBUM_ART,
+    MODE_STROBE_2_0,
+    MODE_CLASSIC_RAPID,
+    MODE_PSYCHO_OVERDRIVE,
 )
 from audio_capture import AudioCaptureManager
 from visualizer import VisualizerEngine
@@ -181,10 +184,13 @@ class BeatStrobeApp:
                         elif event.key in (pygame.K_2, pygame.K_w):
                             # Toggle Mode 2.0 (Smart Sync)
                             self.visualizer.toggle_mode_2_0()
-                        elif event.key in (pygame.K_3, pygame.K_r):
+                        elif event.key in (pygame.K_3, pygame.K_e):
+                            # Toggle Classic Rapid Strobe Mode (How it was before)
+                            self.visualizer.toggle_classic_rapid()
+                        elif event.key in (pygame.K_4, pygame.K_r):
                             # Toggle Red Only Strobe Mode
                             self.visualizer.toggle_red_only()
-                        elif event.key in (pygame.K_4, pygame.K_o, pygame.K_z):
+                        elif event.key in (pygame.K_5, pygame.K_o, pygame.K_z):
                             # Toggle Static Solid Color Lighting Mode (Override music strobing with solid color)
                             self.visualizer.toggle_solid_color()
                         elif event.key == pygame.K_n:
@@ -345,6 +351,14 @@ class BeatStrobeApp:
                     audio_state["progress"] = tl_prog
                     audio_state["duration"] = tl_dur
                     audio_state["position"] = tl_pos
+
+                    # Keep audio detector synchronized with smart vs classic mode
+                    is_smart = (self.visualizer.mode == MODE_STROBE_2_0) and not self.visualizer.overdrive_mode
+                    if hasattr(self.audio_mgr, "set_smart_mode"):
+                        self.audio_mgr.set_smart_mode(is_smart)
+                    if hasattr(self.audio_mgr, "set_overdrive"):
+                        self.audio_mgr.set_overdrive(self.visualizer.overdrive_mode or self.visualizer.mode in (MODE_CLASSIC_RAPID, MODE_PSYCHO_OVERDRIVE))
+
                     self.visualizer.update(dt, audio_state)
                     # Feed audio energy into song waveform contour tracker
                     if self.media_mgr and hasattr(self.media_mgr, "update_waveform_energy"):

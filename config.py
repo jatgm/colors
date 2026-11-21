@@ -20,6 +20,8 @@ HIHAT_FREQ_RANGE = (7500, 16000)
 
 # Strobe Modes
 MODE_STROBE_2_0 = "[2.0] Strobe 2.0 (Smart Sync)"
+MODE_SMART_RHYTHM = MODE_STROBE_2_0
+MODE_CLASSIC_RAPID = "[CLASSIC] Classic Rapid Strobe"
 MODE_PSYCHO_OVERDRIVE = "[OVR] Psycho Overdrive (Ultra)"
 MODE_RED_ONLY = "[RED] Red Only"
 MODE_BASS_ONLY = "[BASS] Bass Only"
@@ -35,6 +37,7 @@ MODE_MONOCHROME = "Monochrome Blitz"
 
 STROBE_MODES = [
     MODE_STROBE_2_0,
+    MODE_CLASSIC_RAPID,
     MODE_PSYCHO_OVERDRIVE,
     MODE_RED_ONLY,
     MODE_BASS_ONLY,

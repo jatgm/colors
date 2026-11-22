@@ -145,6 +145,18 @@ class BeatDetector:
         self.is_verse = True
         self.section_name = "VERSE"                     # "VERSE", "BUILDUP", or "CHORUS"
         self.section_energy = 0.0
+        self.section_probs = {"verse": 100, "buildup": 0, "chorus": 0, "breakdown": 0}
+        self.chorus_burst_multiplier = 1.0
+
+        # PLL Phase tracking and harmonic states
+        self.phase_error = 0.0
+        self.phase_drift_ms = 0.0
+        self.tempo_stability = 0.0
+        self.harmonic_progression = "Tonic Lock [C]"
+        self.transient_ratio = 1.0
+        self.last_gated_log_time = 0.0
+        self.last_pitch_log_time = 0.0
+        self.prev_dominant_pitch = -1
 
         # Real-time logic rationale & telemetry console log ring buffer
         self.telemetry_logs = deque(maxlen=60)
@@ -280,6 +292,13 @@ class BeatDetector:
                 "pitch_confidence": 0.0,
                 "is_chorus": False,
                 "section_energy": 0.0,
+                "section_probs": dict(self.section_probs),
+                "chorus_burst_multiplier": float(self.chorus_burst_multiplier),
+                "harmonic_progression": str(self.harmonic_progression),
+                "transient_ratio": float(self.transient_ratio),
+                "phase_error": float(self.phase_error),
+                "phase_drift_ms": float(self.phase_drift_ms),
+                "tempo_stability": float(self.tempo_stability),
                 "telemetry_logs": list(self.telemetry_logs),
                 "dynamic_thresh": 0.0,
                 "high_thresh": 0.0,
@@ -367,6 +386,11 @@ class BeatDetector:
             phi = (dt_anchor / beat_period) % 1.0
             self.beat_phase = phi
 
+            signed_err = phi if phi <= 0.5 else (phi - 1.0)
+            self.phase_error = float(signed_err)
+            self.phase_drift_ms = float(signed_err * beat_period * 1000.0)
+            self.tempo_stability = float(min(100.0, max(0.0, self.bpm_confidence * 100.0)))
+
             dist_downbeat = min(phi, 1.0 - phi)
             dist_backbeat = abs(phi - 0.5)
             dist_16th = min(abs(phi - 0.25), abs(phi - 0.75))
@@ -386,6 +410,9 @@ class BeatDetector:
                 grid_mult = 1.0 + 0.60 * dead_zone_ratio * self.bpm_confidence
         else:
             self.beat_phase = 0.0
+            self.phase_error = 0.0
+            self.phase_drift_ms = 0.0
+            self.tempo_stability = float(min(100.0, max(0.0, self.bpm_confidence * 100.0)))
             self.is_on_grid_downbeat = True
             self.is_on_grid_backbeat = True
             grid_mult = 1.0
@@ -481,6 +508,8 @@ class BeatDetector:
                 ratio = bass_flux / max(1e-4, dynamic_thresh)
                 grid_str = f"PLL on-grid phi {self.beat_phase:.2f}" if self.is_on_grid_downbeat else f"off-grid phi {self.beat_phase:.2f}"
                 self._log_event(f"[KICK] bass_flux {bass_flux:.3f} > thresh {dynamic_thresh:.3f} (ratio {ratio:.2f}x) {grid_str}")
+                if self.is_on_grid_downbeat:
+                    self._log_event(f"[PLL] On-grid downbeat confirmed (phase {self.beat_phase:.2f}) -> Flash")
 
             if is_smart_active and self.estimated_bpm > 45.0 and self.bpm_confidence > 0.20:
                 T_beat = 60.0 / self.estimated_bpm
@@ -491,6 +520,10 @@ class BeatDetector:
                     self.last_grid_anchor = now - (offset * 0.25)
             else:
                 self.last_grid_anchor = now
+        elif (not is_attack_transient and sub_flux > 0.08 and
+              (now - self.last_gated_log_time >= 0.20)):
+            self.last_gated_log_time = now
+            self._log_event(f"[808 TAIL GATED] sustain decay {sub_flux:.2f} suppressed (flux < tail_th {sub_thresh:.2f}) -> black cut")
 
         # 7. Dynamic Threshold for Snare
         is_snare_beat = False
@@ -597,10 +630,30 @@ class BeatDetector:
             # Pitch confidence: ratio of top pitch over mean pitch
             mean_c = float(np.mean(norm_chroma))
             self.pitch_confidence = min(1.0, max(0.0, float((norm_chroma[self.dominant_pitch_idx] - mean_c) * 3.5)))
+
+            dominant_note = self.note_names[self.dominant_pitch_idx]
+            secondary_note = self.note_names[self.secondary_pitch_idx]
+            interval = (self.secondary_pitch_idx - self.dominant_pitch_idx) % 12
+            if interval == 7:
+                self.harmonic_progression = f"5th Interval ({dominant_note} -> {secondary_note})"
+            elif interval == 5:
+                self.harmonic_progression = f"4th Interval ({dominant_note} -> {secondary_note})"
+            elif interval in (3, 4):
+                self.harmonic_progression = f"3rd Interval ({dominant_note} -> {secondary_note})"
+            else:
+                self.harmonic_progression = f"Tonic Lock [{dominant_note}]"
+
+            if (self.dominant_pitch_idx != self.prev_dominant_pitch
+                    and self.pitch_confidence > 0.35
+                    and (now - self.last_pitch_log_time >= 0.50)):
+                self.last_pitch_log_time = now
+                self.prev_dominant_pitch = self.dominant_pitch_idx
+                self._log_event(f"[HARMONY] Pitch shift to {dominant_note} (conf {int(self.pitch_confidence*100)}%) -> secondary accent updated")
         else:
             self.chroma_vector *= 0.85
             self.pitch_confidence = 0.0
             self.secondary_pitch_idx = (self.dominant_pitch_idx + 7) % 12
+            self.harmonic_progression = f"Tonic Lock [{self.note_names[self.dominant_pitch_idx]}]"
 
         # 13. Intelligent Song Section Tracking (Verse, Buildup, Chorus)
         # Volume-independent, multi-measure phrase analysis with Schmitt-trigger hysteresis
@@ -706,6 +759,21 @@ class BeatDetector:
         else:
             self.section_energy = max(0.5, min(1.0, energy_ratio * 0.95))
 
+        # Macro Section Probabilities (Verse, Buildup, Chorus, Breakdown)
+        raw_chorus_p = max(0.0, min(1.0, (energy_ratio - 0.95) * 1.5 + (0.35 if self.is_chorus else 0.0) + (curr_sub_bass * 0.4)))
+        raw_buildup_p = max(0.0, min(1.0, (0.5 if is_rising else 0.0) + (0.35 if self.is_buildup else 0.0) + (0.2 if in_buildup_zone else 0.0)))
+        raw_breakdown_p = max(0.0, min(1.0, (0.05 - curr_total) * 18.0 if curr_total < 0.05 else 0.0))
+        raw_verse_p = max(0.1, 1.0 - raw_chorus_p - raw_buildup_p - raw_breakdown_p)
+        p_sum = raw_chorus_p + raw_buildup_p + raw_breakdown_p + raw_verse_p
+        p_c = int(round((raw_chorus_p / p_sum) * 100))
+        p_b = int(round((raw_buildup_p / p_sum) * 100))
+        p_br = int(round((raw_breakdown_p / p_sum) * 100))
+        p_v = max(0, 100 - p_c - p_b - p_br)
+        self.section_probs = {"verse": p_v, "buildup": p_b, "chorus": p_c, "breakdown": p_br}
+        self.chorus_burst_multiplier = float(self.section_energy if self.is_chorus else 1.0)
+        sub_mean_ref = max(1e-4, sub_mean if 'sub_mean' in locals() else 0.1)
+        self.transient_ratio = float(sub_flux / sub_mean_ref)
+
         return {
             "is_kick": is_kick_beat,
             "is_808": is_808,
@@ -738,6 +806,13 @@ class BeatDetector:
             "is_verse": self.is_verse,
             "section_name": self.section_name,
             "section_energy": float(self.section_energy),
+            "section_probs": dict(self.section_probs),
+            "chorus_burst_multiplier": float(self.chorus_burst_multiplier),
+            "harmonic_progression": str(self.harmonic_progression),
+            "transient_ratio": float(self.transient_ratio),
+            "phase_error": float(self.phase_error),
+            "phase_drift_ms": float(self.phase_drift_ms),
+            "tempo_stability": float(self.tempo_stability),
             "telemetry_logs": list(self.telemetry_logs),
             "dynamic_thresh": float(dynamic_thresh) if 'dynamic_thresh' in locals() else 0.0,
             "high_thresh": float(high_thresh) if 'high_thresh' in locals() else 0.0,

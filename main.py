@@ -43,6 +43,7 @@ class ColorsApp:
         # Display manager for multi-monitor setup
         self.display_mgr = DisplayManager()
         self.screen, self.screen_w, self.screen_h, self.is_dual = self.display_mgr.apply_current_mode()
+        self.fps_cap = self.display_mgr.get_active_refresh_rate()
 
         initial_mon = self.display_mgr.monitors[0].rect if self.display_mgr.monitors else None
 
@@ -97,6 +98,7 @@ class ColorsApp:
 
     def on_display_mode_change(self):
         self.screen, self.screen_w, self.screen_h, self.is_dual = self.display_mgr.apply_current_mode()
+        self.fps_cap = self.display_mgr.get_active_refresh_rate()
         self.visualizer.resize(self.screen_w, self.screen_h)
         initial_mon = self.display_mgr.monitors[0].rect if self.display_mgr.monitors else None
         self.hud.resize(self.screen_w, self.screen_h, initial_mon)
@@ -167,8 +169,8 @@ class ColorsApp:
                                 self.hud.show_console = False
                             else:
                                 self.running = False
-                        elif event.key in (pygame.K_BACKQUOTE, pygame.K_F12, pygame.K_g):
-                            # Toggle Real-Time Logic & Math Telemetry Console
+                        elif event.key in (pygame.K_BACKQUOTE, pygame.K_F12, pygame.K_g) or (event.key == pygame.K_c and (event.mod & (pygame.KMOD_CTRL | pygame.KMOD_ALT))):
+                            # Toggle Real-Time Logic & Math Telemetry Console (~ / Ctrl+C / F12 / G)
                             self.hud.toggle_console()
                         elif event.key == pygame.K_x:
                             # Toggle Crazy Overdrive Mode!
@@ -432,9 +434,9 @@ class ColorsApp:
                     self.media_mgr,
                 )
 
-                # 8. Display swap & frame cap
+                # 8. Display swap & frame cap (matches active monitor refresh rate with hardware vsync)
                 pygame.display.flip()
-                self.clock.tick(FPS_CAP)
+                self.clock.tick(getattr(self, "fps_cap", FPS_CAP))
 
         finally:
             self.media_mgr.stop()

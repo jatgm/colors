@@ -2,10 +2,27 @@
 Configuration, color palettes, strobe modes, and constants.
 """
 
+def detect_max_display_refresh_rate(default_hz=165):
+    """
+    Detect highest monitor refresh rate across connected displays (e.g. 165Hz),
+    falling back to default_hz if unqueryable or not on Windows.
+    Matches display scan-out cleanly to prevent temporal screen tearing.
+    """
+    try:
+        from display_manager import query_windows_displays
+        displays = query_windows_displays()
+        rates = [d["hz"] for d in displays if d.get("hz", 0) > 0]
+        if rates:
+            return max(rates)
+    except Exception:
+        pass
+    return default_hz
+
+
 # Window / Display Defaults
 DEFAULT_WINDOW_WIDTH = 1360
 DEFAULT_WINDOW_HEIGHT = 800
-FPS_CAP = 120  # High frame rate for ultra-snappy strobe sync
+FPS_CAP = detect_max_display_refresh_rate(165)  # Dynamic match for 165Hz / high-refresh displays without tearing
 
 # Audio settings
 SAMPLE_RATE = 44100

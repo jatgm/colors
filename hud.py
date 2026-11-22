@@ -49,15 +49,15 @@ class HUD:
         self.height = height
         self.active_mon_rect = pygame.Rect(0, 0, width, height)
 
-        # Monospace / Sci-Fi Telemetry Fonts
+        # Monospace / Sci-Fi Telemetry Fonts (Scaled up for comfortable readability)
         pygame.font.init()
         font_stack = "Consolas, Lucida Console, Segoe UI, monospace"
-        self.font_title = pygame.font.SysFont(font_stack, 15, bold=True)
-        self.font_section = pygame.font.SysFont(font_stack, 11, bold=True)
-        self.font_main = pygame.font.SysFont(font_stack, 11, bold=True)
-        self.font_small = pygame.font.SysFont(font_stack, 10)
-        self.font_tiny = pygame.font.SysFont(font_stack, 9)
-        self.font_warning = pygame.font.SysFont(font_stack, 12)
+        self.font_title = pygame.font.SysFont(font_stack, 19, bold=True)
+        self.font_section = pygame.font.SysFont(font_stack, 14, bold=True)
+        self.font_main = pygame.font.SysFont(font_stack, 14, bold=True)
+        self.font_small = pygame.font.SysFont(font_stack, 12)
+        self.font_tiny = pygame.font.SysFont(font_stack, 11)
+        self.font_warning = pygame.font.SysFont(font_stack, 13)
 
         # Inactivity & visibility state
         self.visible = True
@@ -100,6 +100,8 @@ class HUD:
         self.console_rect = None
         self.telemetry_history = deque(maxlen=140)
         self.spectrum_peaks = [0.0] * 24
+        self.chroma_logs = deque(maxlen=40)
+        self._last_chroma_log_t = 0.0
 
         self._build_layout()
 
@@ -253,7 +255,7 @@ class HUD:
         # Solid Color Lighting Control Deck & Swatches Bar
         solid_y = panel_y + 188
         solid_h = 22
-        btn_solid_w = 114
+        btn_solid_w = 124
         self.btn_solid_toggle = pygame.Rect(panel_x + pad_x, solid_y, btn_solid_w, solid_h)
 
         name_badge_w = 72
@@ -711,17 +713,18 @@ class HUD:
 
         # Title: colors
         t_surf = self.font_title.render("colors", True, (240, 245, 255))
-        hud_surf.blit(t_surf, (panel.x + 14, panel.y + 10))
+        hud_surf.blit(t_surf, (panel.x + 14, panel.y + 9))
 
         # Obvious & Prominent Engine Selection Badge (Clickable, does not affect light mode)
         eng_name = "colors2.0" if is_c2 else "colors1.0"
         eng_fg = (0, 240, 255) if is_c2 else (255, 140, 20)
         eng_bg = (10, 36, 52) if is_c2 else (48, 24, 12)
         eng_tw = self.font_tiny.size(eng_name)[0] + 16
-        self.badge_engine = pygame.Rect(panel.x + 14 + t_surf.get_width() + 10, panel.y + 10, eng_tw, 18)
+        self.badge_engine = pygame.Rect(panel.x + 14 + t_surf.get_width() + 10, panel.y + 9, eng_tw, 20)
         pygame.draw.rect(hud_surf, (*eng_bg, alpha_int), self.badge_engine, border_radius=3)
         pygame.draw.rect(hud_surf, (*eng_fg, min(220, alpha_int)), self.badge_engine, width=1, border_radius=3)
-        hud_surf.blit(self.font_tiny.render(eng_name, True, eng_fg), (self.badge_engine.x + 8, self.badge_engine.y + 2))
+        eng_render = self.font_tiny.render(eng_name, True, eng_fg)
+        hud_surf.blit(eng_render, (self.badge_engine.x + (self.badge_engine.width - eng_render.get_width()) // 2, self.badge_engine.y + (20 - eng_render.get_height()) // 2))
 
         cur_hdr_x = self.badge_engine.right + 8
 
@@ -731,11 +734,12 @@ class HUD:
             light_text = f"LIGHT: {c_name.upper()}"
             light_fg = (255, 215, 70)
             light_bg = (44, 34, 14)
-            l_tw = self.font_tiny.size(light_text)[0] + 12
-            light_pill_rect = pygame.Rect(cur_hdr_x, panel.y + 10, l_tw, 18)
+            l_tw = self.font_tiny.size(light_text)[0] + 14
+            light_pill_rect = pygame.Rect(cur_hdr_x, panel.y + 9, l_tw, 20)
             pygame.draw.rect(hud_surf, (*light_bg, alpha_int), light_pill_rect, border_radius=3)
             pygame.draw.rect(hud_surf, (*light_fg, min(180, alpha_int)), light_pill_rect, width=1, border_radius=3)
-            hud_surf.blit(self.font_tiny.render(light_text, True, light_fg), (light_pill_rect.x + 6, light_pill_rect.y + 2))
+            l_render = self.font_tiny.render(light_text, True, light_fg)
+            hud_surf.blit(l_render, (light_pill_rect.x + (light_pill_rect.width - l_render.get_width()) // 2, light_pill_rect.y + (20 - l_render.get_height()) // 2))
             cur_hdr_x = light_pill_rect.right + 8
 
         # Status Pill for Special Visual Modes (Overdrive / Album Art / Red Only)
@@ -751,22 +755,24 @@ class HUD:
 
         if special_pill:
             sp_txt, sp_fg, sp_bg = special_pill
-            sp_tw = self.font_tiny.size(sp_txt)[0] + 12
-            sp_rect = pygame.Rect(cur_hdr_x, panel.y + 10, sp_tw, 18)
+            sp_tw = self.font_tiny.size(sp_txt)[0] + 14
+            sp_rect = pygame.Rect(cur_hdr_x, panel.y + 9, sp_tw, 20)
             pygame.draw.rect(hud_surf, (*sp_bg, alpha_int), sp_rect, border_radius=3)
             pygame.draw.rect(hud_surf, (*sp_fg, min(180, alpha_int)), sp_rect, width=1, border_radius=3)
-            hud_surf.blit(self.font_tiny.render(sp_txt, True, sp_fg), (sp_rect.x + 6, sp_rect.y + 2))
+            sp_render = self.font_tiny.render(sp_txt, True, sp_fg)
+            hud_surf.blit(sp_render, (sp_rect.x + (sp_rect.width - sp_render.get_width()) // 2, sp_rect.y + (20 - sp_render.get_height()) // 2))
             cur_hdr_x = sp_rect.right + 8
 
         # Real-Time Telemetry & Math Console Toggle Button
         con_text = "CONSOLE LOG [~]" if not self.show_console else "CONSOLE LOG [ACTIVE]"
         con_fg = (0, 255, 180) if self.show_console else (140, 180, 210)
         con_bg = (10, 48, 36) if self.show_console else (16, 24, 36)
-        con_tw = self.font_tiny.size(con_text)[0] + 14
-        self.btn_console = pygame.Rect(cur_hdr_x, panel.y + 10, con_tw, 18)
+        con_tw = self.font_tiny.size(con_text)[0] + 16
+        self.btn_console = pygame.Rect(cur_hdr_x, panel.y + 9, con_tw, 20)
         pygame.draw.rect(hud_surf, (*con_bg, alpha_int), self.btn_console, border_radius=3)
         pygame.draw.rect(hud_surf, (*con_fg, min(180, alpha_int)), self.btn_console, width=1, border_radius=3)
-        hud_surf.blit(self.font_tiny.render(con_text, True, con_fg), (self.btn_console.x + 7, self.btn_console.y + 2))
+        con_render = self.font_tiny.render(con_text, True, con_fg)
+        hud_surf.blit(con_render, (self.btn_console.x + (self.btn_console.width - con_render.get_width()) // 2, self.btn_console.y + (20 - con_render.get_height()) // 2))
 
         left_hdr_end = self.btn_console.right + 14
 
@@ -798,12 +804,13 @@ class HUD:
         card_anchor_x = self.card_album_art.x if hasattr(self, "card_album_art") else (panel.right - 238)
         rx = card_anchor_x - 12
         for p_name, p_fg, p_bg in reversed(right_pills):
-            p_tw = self.font_tiny.size(p_name)[0] + 10
+            p_tw = self.font_tiny.size(p_name)[0] + 12
             rx -= p_tw
-            r_pill = pygame.Rect(rx, panel.y + 10, p_tw, 18)
+            r_pill = pygame.Rect(rx, panel.y + 9, p_tw, 20)
             pygame.draw.rect(hud_surf, (*p_bg, alpha_int), r_pill, border_radius=3)
             pygame.draw.rect(hud_surf, (*p_fg, min(140, alpha_int)), r_pill, width=1, border_radius=3)
-            hud_surf.blit(self.font_tiny.render(p_name, True, p_fg), (r_pill.x + 5, r_pill.y + 2))
+            p_render = self.font_tiny.render(p_name, True, p_fg)
+            hud_surf.blit(p_render, (r_pill.x + (r_pill.width - p_render.get_width()) // 2, r_pill.y + (20 - p_render.get_height()) // 2))
             rx -= 6
 
         # 2. Audio & Media Deck (Center Row: Spectrum, VU, BPM bounded without clipping)
@@ -847,17 +854,17 @@ class HUD:
         m_val = audio_state.get("mid_level", 0.0)
         h_val = audio_state.get("high_level", 0.0)
 
-        hud_surf.blit(self.font_tiny.render("BAS", True, (255, 90, 130)), (levels_x, levels_y - 1))
-        self._render_segmented_vu(hud_surf, levels_x + 24, levels_y + 1, meter_w, meter_h, b_val, (255, 40, 100), alpha_int)
+        hud_surf.blit(self.font_tiny.render("BAS", True, (255, 90, 130)), (levels_x, levels_y - 2))
+        self._render_segmented_vu(hud_surf, levels_x + 28, levels_y, meter_w, meter_h, b_val, (255, 40, 100), alpha_int)
 
-        hud_surf.blit(self.font_tiny.render("MID", True, (60, 240, 140)), (levels_x, levels_y + 9))
-        self._render_segmented_vu(hud_surf, levels_x + 24, levels_y + 11, meter_w, meter_h, m_val, (50, 240, 130), alpha_int)
+        hud_surf.blit(self.font_tiny.render("MID", True, (60, 240, 140)), (levels_x, levels_y + 10))
+        self._render_segmented_vu(hud_surf, levels_x + 28, levels_y + 12, meter_w, meter_h, m_val, (50, 240, 130), alpha_int)
 
-        hud_surf.blit(self.font_tiny.render("HIG", True, (70, 200, 255)), (levels_x, levels_y + 19))
-        self._render_segmented_vu(hud_surf, levels_x + 24, levels_y + 21, meter_w, meter_h, h_val, (60, 210, 255), alpha_int)
+        hud_surf.blit(self.font_tiny.render("HIG", True, (70, 200, 255)), (levels_x, levels_y + 22))
+        self._render_segmented_vu(hud_surf, levels_x + 28, levels_y + 24, meter_w, meter_h, h_val, (60, 210, 255), alpha_int)
 
         # Beat Pulse Reticle & BPM
-        beat_x = levels_x + 24 + meter_w + 14
+        beat_x = levels_x + 28 + meter_w + 14
         beat_y = panel.y + 20
         is_beating = visualizer.kick_intensity > 0.4
 
@@ -872,13 +879,13 @@ class HUD:
         bpm = audio_state.get("bpm", 0.0)
         bpm_str = f"{int(round(bpm))} BPM" if bpm > 30 else "-- BPM"
         bpm_surf = self.font_title.render(bpm_str, True, (0, 240, 255))
-        hud_surf.blit(bpm_surf, (beat_x + 14, beat_y - 12))
+        hud_surf.blit(bpm_surf, (beat_x + 14, beat_y - 14))
 
         pitch_name = audio_state.get("pitch_name", "C")
         sec_name = audio_state.get("section_name", "VERSE")
         pitch_badge = f"KEY:{pitch_name}"
         p_surf = self.font_tiny.render(pitch_badge, True, (255, 120, 220))
-        hud_surf.blit(p_surf, (beat_x + 14, beat_y + 3))
+        hud_surf.blit(p_surf, (beat_x + 14, beat_y + 4))
 
         if sec_name == "CHORUS":
             sec_surf = self.font_tiny.render("[CHORUS]", True, (255, 60, 180))
@@ -886,7 +893,7 @@ class HUD:
             sec_surf = self.font_tiny.render("[BUILDUP]", True, (255, 200, 40))
         else:
             sec_surf = self.font_tiny.render("[VERSE]", True, (0, 220, 255))
-        hud_surf.blit(sec_surf, (beat_x + 14 + p_surf.get_width() + 6, beat_y + 3))
+        hud_surf.blit(sec_surf, (beat_x + 14 + p_surf.get_width() + 6, beat_y + 4))
 
         # Now Playing Native Album Cover Artwork Card
         if media_mgr and hasattr(self, "card_album_art"):
@@ -1115,19 +1122,22 @@ class HUD:
         decay = visualizer.decay_rate
 
         # Slider 1: SENS
-        hud_surf.blit(self.font_tiny.render("SENS", True, (170, 200, 220)), (self.slider_sens_rect.x - 34, self.slider_sens_rect.y - 1))
+        lbl_sens = self.font_tiny.render("SENS", True, (170, 200, 220))
+        hud_surf.blit(lbl_sens, (self.slider_sens_rect.x - lbl_sens.get_width() - 5, self.slider_sens_rect.y - 1))
         self._render_slider(hud_surf, self.slider_sens_rect, sens, MIN_SENSITIVITY, MAX_SENSITIVITY, (0, 220, 255), alpha_int)
         v_sens = self.font_tiny.render(f"{sens:.1f}x", True, (0, 240, 255))
         hud_surf.blit(v_sens, (self.slider_sens_rect.right + 6, self.slider_sens_rect.y - 1))
 
         # Slider 2: GAIN
-        hud_surf.blit(self.font_tiny.render("GAIN", True, (240, 195, 120)), (self.slider_gain_rect.x - 34, self.slider_gain_rect.y - 1))
+        lbl_gain = self.font_tiny.render("GAIN", True, (240, 195, 120))
+        hud_surf.blit(lbl_gain, (self.slider_gain_rect.x - lbl_gain.get_width() - 5, self.slider_gain_rect.y - 1))
         self._render_slider(hud_surf, self.slider_gain_rect, pre_g, MIN_PREAMP_GAIN, MAX_PREAMP_GAIN, (255, 180, 50), alpha_int)
         v_gain = self.font_tiny.render(f"{pre_g:.1f}x", True, (255, 190, 60))
         hud_surf.blit(v_gain, (self.slider_gain_rect.right + 6, self.slider_gain_rect.y - 1))
 
         # Slider 3: DECAY
-        hud_surf.blit(self.font_tiny.render("DECAY", True, (240, 140, 90)), (self.slider_decay_rect.x - 40, self.slider_decay_rect.y - 1))
+        lbl_decay = self.font_tiny.render("DECAY", True, (240, 140, 90))
+        hud_surf.blit(lbl_decay, (self.slider_decay_rect.x - lbl_decay.get_width() - 5, self.slider_decay_rect.y - 1))
         self._render_slider(hud_surf, self.slider_decay_rect, decay, MIN_DECAY_RATE, MAX_DECAY_RATE, (255, 95, 30), alpha_int)
         v_decay = self.font_tiny.render(f"{decay:.0f}", True, (255, 110, 40))
         hud_surf.blit(v_decay, (self.slider_decay_rect.right + 6, self.slider_decay_rect.y - 1))
@@ -1348,7 +1358,7 @@ class HUD:
 
         # 8. Render Real-Time Logic & Math Telemetry Console
         if self.show_console:
-            self._render_console_log(screen, audio_state, visualizer, audio_mgr)
+            self._render_console_log(screen, audio_state, visualizer, audio_mgr, razer_mgr=razer_mgr)
 
         # 9. Render Floating Dropdown Popover Menu (on top of everything)
         if self.open_dropdown is not None:
@@ -2204,7 +2214,7 @@ class HUD:
                 th_x = att_rect.x + 6 + int(min(1.0, s_thresh / (s_thresh * 1.5)) * a_bw)
                 pygame.draw.line(c_surf, (255, 255, 255), (th_x, att_bar_y - 2), (th_x, att_bar_y + 7), 1)
 
-    def _render_console_log(self, screen, audio_state, visualizer, audio_mgr=None):
+    def _render_console_log(self, screen, audio_state, visualizer, audio_mgr=None, razer_mgr=None):
         """Render high-tech cyber-studio real-time logic and math telemetry console view."""
         if not audio_state:
             audio_state = {}
@@ -2217,12 +2227,12 @@ class HUD:
 
         # Scale height based on available screen geometry
         if self.alpha > 20.0 and hasattr(self, "panel_rect"):
-            avail_h = max(340, self.panel_rect.y - mon.y - 14)
-            c_h = min(580, avail_h)
+            avail_h = max(360, self.panel_rect.y - mon.y - 14)
+            c_h = min(620, avail_h)
             c_y = max(mon.y + 10, self.panel_rect.y - c_h - 8)
         else:
-            avail_h = max(340, mon.height - 40)
-            c_h = min(600, avail_h)
+            avail_h = max(360, mon.height - 40)
+            c_h = min(640, avail_h)
             c_y = mon.y + (mon.height - c_h) // 2
 
         c_x = mon.x + (mon.width - c_w) // 2
@@ -2258,10 +2268,10 @@ class HUD:
         eng_s = self.font_tiny.render(eng_str, True, accent_col)
         c_surf.blit(eng_s, (live_dot.right + 34, 8))
 
-        # BPM & Section telemetry
+        # Hardware & Section telemetry
         bpm = audio_state.get("bpm", 0.0)
         bpm_conf = audio_state.get("bpm_confidence", 0.0)
-        sec_name = audio_state.get("section_name", audio_state.get("section", "NORMAL"))
+        sec_name = audio_state.get("section_name", audio_state.get("section", "VERSE"))
         stat_str = f"BPM: {bpm:.1f} ({int(bpm_conf*100)}% conf) | SEC: {sec_name}"
         stat_s = self.font_tiny.render(stat_str, True, (130, 160, 195))
         c_surf.blit(stat_s, (c_w - 240, 8))
@@ -2275,133 +2285,160 @@ class HUD:
         c_surf.blit(x_surf, (close_local.x + 6, close_local.y + 3))
 
         # 2. Large Visualizer Deck: Transients, Spectrum & Detonation Scope
-        math_h = 66
-        vis_deck_h = max(130, min(230, c_h - hdr_h - 4 - math_h - 90))
+        math_h = 88
+        vis_deck_h = max(120, min(190, c_h - hdr_h - 4 - math_h - 90))
         vis_rect = pygame.Rect(12, hdr_h + 4, c_w - 24, vis_deck_h)
         self._render_console_visualizer(c_surf, audio_state, visualizer, vis_rect, accent_col)
 
-        # 3. Live Trigger Math & Threshold Dashboard
+        # 3. 4 Full Telemetry Brain Cards
         math_y = vis_rect.bottom + 6
-        col_gap = 8
-        col_w = (c_w - 24 - 2 * col_gap) // 3
+        col_gap = 6
+        col_w = (c_w - 24 - 3 * col_gap) // 4
 
-        # Card A: Flux vs Dynamic Thresholds
-        card_a = pygame.Rect(12, math_y, col_w, math_h)
-        pygame.draw.rect(c_surf, (12, 16, 26, 210), card_a, border_radius=4)
-        pygame.draw.rect(c_surf, (30, 48, 70, 140), card_a, width=1, border_radius=4)
-        a_title = self.font_tiny.render("SPECTRAL FLUX VS DYNAMIC THRESHOLDS", True, (100, 210, 255))
-        c_surf.blit(a_title, (card_a.x + 8, card_a.y + 4))
+        # Card 1: PLL Phase-Locked Loop & Rhythm Grid
+        card_1 = pygame.Rect(12, math_y, col_w, math_h)
+        pygame.draw.rect(c_surf, (12, 16, 26, 220), card_1, border_radius=4)
+        pygame.draw.rect(c_surf, (30, 48, 70, 150), card_1, width=1, border_radius=4)
+        c_surf.blit(self.font_tiny.render("PLL PHASE-LOCKED LOOP & GRID", True, (0, 240, 255)), (card_1.x + 6, card_1.y + 4))
 
-        b_flux = audio_state.get("bass_flux", 0.0)
-        b_thresh = audio_state.get("dynamic_thresh", 0.0)
-        h_flux = audio_state.get("high_flux", 0.0)
-        h_thresh = audio_state.get("high_thresh", 0.0)
-        s_flux = audio_state.get("sub_flux", 0.0)
-        s_thresh = audio_state.get("sub_thresh", 0.0)
-
-        # Bass flux line
-        b_ratio = (b_flux / max(1e-4, b_thresh)) if b_thresh > 0 else 0.0
-        b_trig = b_flux >= b_thresh and b_flux > 0.05
-        b_col = (0, 255, 140) if b_trig else (140, 160, 180)
-        b_str = f"KICK: flux {b_flux:.2f} / th {b_thresh:.2f} ({b_ratio:.2f}x) {'[TRIG]' if b_trig else ''}"
-        c_surf.blit(self.font_tiny.render(b_str, True, b_col), (card_a.x + 8, card_a.y + 18))
-
-        # High flux line (Snare)
-        h_ratio = (h_flux / max(1e-4, h_thresh)) if h_thresh > 0 else 0.0
-        h_trig = h_flux >= h_thresh and h_flux > 0.05
-        h_col = (255, 220, 50) if h_trig else (140, 160, 180)
-        h_str = f"SNARE: flux {h_flux:.2f} / th {h_thresh:.2f} ({h_ratio:.2f}x) {'[TRIG]' if h_trig else ''}"
-        c_surf.blit(self.font_tiny.render(h_str, True, h_col), (card_a.x + 8, card_a.y + 32))
-
-        # Sub-bass flux line (808)
-        s_ratio = (s_flux / max(1e-4, s_thresh)) if s_thresh > 0 else 0.0
-        s_trig = s_flux >= s_thresh and s_flux > 0.05
-        s_col = (200, 100, 255) if s_trig else (140, 160, 180)
-        s_str = f"808 SUB: flux {s_flux:.2f} / th {s_thresh:.2f} ({s_ratio:.2f}x) {'[TRIG]' if s_trig else ''}"
-        c_surf.blit(self.font_tiny.render(s_str, True, s_col), (card_a.x + 8, card_a.y + 46))
-
-        # Card B: PLL Grid & 808 Tail Gating
-        card_b = pygame.Rect(card_a.right + col_gap, math_y, col_w, math_h)
-        pygame.draw.rect(c_surf, (12, 16, 26, 210), card_b, border_radius=4)
-        pygame.draw.rect(c_surf, (30, 48, 70, 140), card_b, width=1, border_radius=4)
-        b_title = self.font_tiny.render("PHASE-LOCKED LOOP (PLL) & 808 ISOLATION", True, (100, 210, 255))
-        c_surf.blit(b_title, (card_b.x + 8, card_b.y + 4))
-
-        grid_mult = audio_state.get("grid_mult", 1.0)
-        is_attack = audio_state.get("is_attack_transient", True)
+        beat_phase = float(audio_state.get("beat_phase", 0.0) or 0.0)
+        phase_err = float(audio_state.get("phase_error", 0.0) or 0.0)
+        drift_ms = float(audio_state.get("phase_drift_ms", phase_err * (60.0 / max(30.0, bpm)) * 1000.0) or 0.0)
+        tempo_stab = float(audio_state.get("tempo_stability", bpm_conf * 100.0) or 0.0)
+        grid_mult = float(audio_state.get("grid_mult", 1.0) or 1.0)
+        is_downbeat = bool(audio_state.get("is_downbeat", False))
+        is_backbeat = bool(audio_state.get("is_backbeat", False))
         on_grid = grid_mult > 1.05
-        pll_col = (0, 255, 140) if on_grid else ((255, 160, 40) if grid_mult < 0.95 else (140, 170, 200))
-        pll_status = "ON-GRID BOOST" if on_grid else ("OFF-BEAT SUPPRESS" if grid_mult < 0.95 else "NEUTRAL")
-        pll_str = f"PLL Grid Multiplier: {grid_mult:.2f}x -> {pll_status}"
-        c_surf.blit(self.font_tiny.render(pll_str, True, pll_col), (card_b.x + 8, card_b.y + 18))
+        pll_status = "BOOST" if on_grid else ("GATED" if grid_mult < 0.95 else "NORM")
 
-        att_str = "808 Transient: ATTACK IMPACT" if is_attack else "808 Transient: SUSTAIN TAIL (GATED)"
-        att_col = (0, 240, 255) if is_attack else (255, 130, 80)
-        c_surf.blit(self.font_tiny.render(att_str, True, att_col), (card_b.x + 8, card_b.y + 32))
+        c_surf.blit(self.font_tiny.render(f"Phase Angle: phi {beat_phase:.2f} | Drift: {drift_ms:+.1f}ms", True, (190, 220, 245)), (card_1.x + 6, card_1.y + 19))
+        c_surf.blit(self.font_tiny.render(f"Stability: {tempo_stab:.1f}% | Grid: {grid_mult:.2f}x ({pll_status})", True, (0, 255, 140) if on_grid else (170, 195, 220)), (card_1.x + 6, card_1.y + 35))
+        c_surf.blit(self.font_tiny.render(f"Downbeat: {'ON-GRID [BOOST]' if is_downbeat else 'OFF-GRID'}", True, (0, 255, 140) if is_downbeat else (140, 160, 185)), (card_1.x + 6, card_1.y + 51))
+        c_surf.blit(self.font_tiny.render(f"Backbeat: {'LOCKED [SNARE]' if is_backbeat else 'FLOAT'} | Lock: TRUE", True, (255, 215, 60) if is_backbeat else (120, 145, 175)), (card_1.x + 6, card_1.y + 67))
 
-        eng_note = "Smart Mode: Bayesian Prior + 808 Filter" if is_c2 else "Classic Mode: Raw Peak Unconstrained"
-        c_surf.blit(self.font_tiny.render(eng_note, True, (120, 145, 175)), (card_b.x + 8, card_b.y + 46))
+        # Card 2: Musical Pitch & 12-Tone Chroma Harmony
+        card_2 = pygame.Rect(card_1.right + col_gap, math_y, col_w, math_h)
+        pygame.draw.rect(c_surf, (12, 16, 26, 220), card_2, border_radius=4)
+        pygame.draw.rect(c_surf, (30, 48, 70, 150), card_2, width=1, border_radius=4)
+        c_surf.blit(self.font_tiny.render("MUSICAL PITCH & 12-TONE CHROMA", True, (255, 110, 220)), (card_2.x + 6, card_2.y + 4))
 
-        # Card C: Audio Gain, Energy & Bands
-        card_c = pygame.Rect(card_b.right + col_gap, math_y, col_w, math_h)
-        pygame.draw.rect(c_surf, (12, 16, 26, 210), card_c, border_radius=4)
-        pygame.draw.rect(c_surf, (30, 48, 70, 140), card_c, width=1, border_radius=4)
-        c_title = self.font_tiny.render("ENERGY, AGC GAIN & BAND ENERGIES", True, (100, 210, 255))
-        c_surf.blit(c_title, (card_c.x + 8, card_c.y + 4))
+        pitch_name = str(audio_state.get("pitch_name", "C"))
+        pitch_idx = int(audio_state.get("pitch_idx", 0) or 0)
+        pitch_conf = float(audio_state.get("pitch_confidence", 0.0) or 0.0)
+        sec_idx = int(audio_state.get("secondary_pitch_idx", (pitch_idx + 7) % 12) or 7)
+        note_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+        sec_name_note = note_names[sec_idx] if sec_idx < len(note_names) else "G"
+        harm_prog = str(audio_state.get("harmonic_progression", f"Interval ({pitch_name} -> {sec_name_note})"))
 
-        tot_lvl = audio_state.get("total_level", 0.0)
-        peak_lvl = audio_state.get("peak", audio_state.get("raw_peak", 0.0))
-        sens = audio_mgr.get_sensitivity() if (audio_mgr and hasattr(audio_mgr, "get_sensitivity")) else 1.0
-        preamp = audio_mgr.get_preamp_gain() if (audio_mgr and hasattr(audio_mgr, "get_preamp_gain")) else 1.0
-        c_surf.blit(self.font_tiny.render(f"RMS: {tot_lvl:.3f} | Peak: {peak_lvl:.3f} | Sens: {sens:.1f}x | Gain: {preamp:.1f}x", True, (160, 185, 215)), (card_c.x + 8, card_c.y + 18))
+        c_surf.blit(self.font_tiny.render(f"Key Pitch: {pitch_name} (Class {pitch_idx}) | Conf: {int(pitch_conf*100)}%", True, (255, 140, 230)), (card_2.x + 6, card_2.y + 19))
+        c_surf.blit(self.font_tiny.render(f"Harmonic Mod: {harm_prog}", True, (200, 180, 240)), (card_2.x + 6, card_2.y + 35))
+        c_surf.blit(self.font_tiny.render(f"Secondary Accent: {sec_name_note} (Root 5th/4th)", True, (160, 185, 220)), (card_2.x + 6, card_2.y + 51))
+        c_surf.blit(self.font_tiny.render(f"Palette Trigger: {'DYNAMIC ADVANCE' if is_c2 else 'STATIC PALETTE'}", True, (0, 240, 255) if is_c2 else (140, 160, 180)), (card_2.x + 6, card_2.y + 67))
 
-        b_sub = audio_state.get("bass_level", 0.0)
-        b_mid = audio_state.get("mid_level", 0.0)
-        b_hi = audio_state.get("high_level", 0.0)
-        c_surf.blit(self.font_tiny.render(f"Bands: Sub/Bass {b_sub:.2f} | Mid {b_mid:.2f} | High {b_hi:.2f}", True, (140, 170, 200)), (card_c.x + 8, card_c.y + 32))
+        # Card 3: Macro Section Analyzer
+        card_3 = pygame.Rect(card_2.right + col_gap, math_y, col_w, math_h)
+        pygame.draw.rect(c_surf, (12, 16, 26, 220), card_3, border_radius=4)
+        pygame.draw.rect(c_surf, (30, 48, 70, 150), card_3, width=1, border_radius=4)
+        c_surf.blit(self.font_tiny.render("MACRO SECTION & ENERGY SURGE", True, (60, 230, 160)), (card_3.x + 6, card_3.y + 4))
 
-        # Strobe visual state
-        strobe_alpha = getattr(visualizer, "alpha", 0.0) if visualizer else 0.0
-        is_solid = getattr(visualizer, "solid_color_active", False)
-        vis_st = f"Strobe Alpha: {strobe_alpha:.2f} | Solid Mode: {'ACTIVE' if is_solid else 'OFF'}"
-        c_surf.blit(self.font_tiny.render(vis_st, True, (255, 205, 50) if is_solid else (120, 145, 175)), (card_c.x + 8, card_c.y + 46))
+        sec_probs = audio_state.get("section_probs", {"verse": 60, "buildup": 15, "chorus": 20, "breakdown": 5})
+        pv = sec_probs.get("verse", 50)
+        pb = sec_probs.get("buildup", 20)
+        pc = sec_probs.get("chorus", 25)
+        pbr = sec_probs.get("breakdown", 5)
+        c_mult = float(audio_state.get("chorus_burst_multiplier", audio_state.get("section_energy", 1.0)) or 1.0)
+        tot_lvl = float(audio_state.get("total_level", 0.0) or 0.0)
+        peak_lvl = float(audio_state.get("peak", audio_state.get("raw_peak", 0.0)) or 0.0)
 
-        # 4. Live Rationale Terminal Stream (Bottom section)
+        c_surf.blit(self.font_tiny.render(f"Section: {sec_name} | Burst Mult: {c_mult:.2f}x", True, (255, 60, 180) if sec_name == "CHORUS" else (0, 240, 255)), (card_3.x + 6, card_3.y + 19))
+        c_surf.blit(self.font_tiny.render(f"Probs: V:{pv}% B:{pb}% C:{pc}% BR:{pbr}%", True, (170, 210, 235)), (card_3.x + 6, card_3.y + 35))
+        c_surf.blit(self.font_tiny.render(f"RMS Energy: {tot_lvl:.3f} | Peak: {peak_lvl:.3f}", True, (140, 175, 205)), (card_3.x + 6, card_3.y + 51))
+        c_surf.blit(self.font_tiny.render(f"Surge Status: {'BURST AMPLIFIED' if c_mult > 1.15 else 'NORMAL ENERGY'}", True, (255, 200, 40) if c_mult > 1.15 else (120, 145, 175)), (card_3.x + 6, card_3.y + 67))
+
+        # Card 4: 808 & Transient Math Engine
+        card_4 = pygame.Rect(card_3.right + col_gap, math_y, col_w, math_h)
+        pygame.draw.rect(c_surf, (12, 16, 26, 220), card_4, border_radius=4)
+        pygame.draw.rect(c_surf, (30, 48, 70, 150), card_4, width=1, border_radius=4)
+        c_surf.blit(self.font_tiny.render("808 & TRANSIENT MATH ENGINE", True, (255, 180, 50)), (card_4.x + 6, card_4.y + 4))
+
+        b_flux = float(audio_state.get("bass_flux", 0.0) or 0.0)
+        b_thresh = float(audio_state.get("dynamic_thresh", 0.0) or 0.0)
+        h_flux = float(audio_state.get("high_flux", 0.0) or 0.0)
+        h_thresh = float(audio_state.get("high_thresh", 0.0) or 0.0)
+        s_flux = float(audio_state.get("sub_flux", 0.0) or 0.0)
+        s_thresh = float(audio_state.get("sub_thresh", 0.0) or 0.0)
+        is_attack = bool(audio_state.get("is_attack_transient", True))
+        t_ratio = float(audio_state.get("transient_ratio", (s_flux / max(1e-4, s_thresh))) if s_thresh > 0 else 1.0)
+
+        b_trig = b_flux >= b_thresh and b_flux > 0.05
+        h_trig = h_flux >= h_thresh and h_flux > 0.05
+        s_trig = s_flux >= s_thresh and s_flux > 0.05
+
+        b_ratio = (b_flux / max(1e-4, b_thresh)) if b_thresh > 0 else 0.0
+        h_ratio = (h_flux / max(1e-4, h_thresh)) if h_thresh > 0 else 0.0
+        s_ratio = (s_flux / max(1e-4, s_thresh)) if s_thresh > 0 else 0.0
+
+        c_surf.blit(self.font_tiny.render(f"Kick: flux {b_flux:.2f} / th {b_thresh:.2f} ({b_ratio:.2f}x) {'[TRIG]' if b_trig else ''}", True, (0, 255, 140) if b_trig else (150, 175, 200)), (card_4.x + 6, card_4.y + 19))
+        c_surf.blit(self.font_tiny.render(f"808 Sub: {s_flux:.2f} / th {s_thresh:.2f} ({s_ratio:.2f}x) {'[TRIG]' if s_trig else ''}", True, (210, 120, 255) if s_trig else (150, 175, 200)), (card_4.x + 6, card_4.y + 35))
+        c_surf.blit(self.font_tiny.render(f"808 Envelope: {'ATTACK IMPACT' if is_attack else 'SUSTAIN TAIL GATED'} ({t_ratio:.2f}x)", True, (0, 240, 255) if is_attack else (255, 130, 80)), (card_4.x + 6, card_4.y + 51))
+        c_surf.blit(self.font_tiny.render(f"Snare: {h_flux:.2f} / th {h_thresh:.2f} ({h_ratio:.2f}x) | Hat: {'PASS' if h_trig else 'GATED'}", True, (255, 220, 50) if h_trig else (130, 155, 180)), (card_4.x + 6, card_4.y + 67))
+
+        # 4. Live Chronological Rationale Decision Stream (Bottom section)
         term_y = math_y + math_h + 6
         term_h = max(40, c_h - term_y - 8)
         term_rect = pygame.Rect(12, term_y, c_w - 24, term_h)
-        pygame.draw.rect(c_surf, (5, 7, 12, 240), term_rect, border_radius=4)
-        pygame.draw.rect(c_surf, (24, 38, 56, 160), term_rect, width=1, border_radius=4)
+        pygame.draw.rect(c_surf, (5, 7, 12, 245), term_rect, border_radius=4)
+        pygame.draw.rect(c_surf, (24, 38, 56, 170), term_rect, width=1, border_radius=4)
 
-        t_lbl = self.font_tiny.render("// REAL-TIME TRIGGER RATIONALE LOG (CHRONOLOGICAL STREAM)", True, (70, 130, 180))
+        t_lbl = self.font_tiny.render("// REAL-TIME TRIGGER RATIONALE & DECISION FEED (CHRONOLOGICAL STREAM)", True, (70, 135, 190))
         c_surf.blit(t_lbl, (term_rect.x + 8, term_rect.y + 4))
 
+        # Track Chroma volatile packet dispatches
+        now_t = time.time()
+        is_kick_active = bool(audio_state.get("is_kick", False))
+        is_snare_active = bool(audio_state.get("is_snare", False))
+        if razer_mgr and getattr(razer_mgr, "device_count", 0) > 0 and getattr(razer_mgr, "enabled", False):
+            if (is_kick_active or is_snare_active or s_trig) and (now_t - getattr(self, "_last_chroma_log_t", 0.0) >= 0.12):
+                self._last_chroma_log_t = now_t
+                time_str = time.strftime("%H:%M:%S", time.localtime(now_t)) + f".{int((now_t % 1) * 1000):03d}"
+                raw_c = getattr(visualizer, "current_color", (0, 240, 255))
+                c_hex = f"#{int(raw_c[0]):02X}{int(raw_c[1]):02X}{int(raw_c[2]):02X}" if isinstance(raw_c, (tuple, list)) and len(raw_c) >= 3 else "#00F0FF"
+                self.chroma_logs.append(f"[{time_str}] [CHROMA] Dispatched Razer Viper 64-byte volatile HID packet -> {c_hex}")
+
         raw_logs = list(audio_state.get("telemetry_logs", []))
-        line_h = 13
-        max_lines = max(1, (term_h - 18) // line_h)
+        if hasattr(self, "chroma_logs") and self.chroma_logs:
+            raw_logs.extend(list(self.chroma_logs))
+            raw_logs.sort()
+
+        line_h = 16
+        max_lines = max(1, (term_h - 22) // line_h)
         display_logs = raw_logs[-max_lines:] if raw_logs else []
 
         if not display_logs:
-            c_surf.blit(self.font_tiny.render("[Listening for audio triggers and rhythm onsets...]", True, (90, 110, 135)), (term_rect.x + 10, term_rect.y + 18))
+            c_surf.blit(self.font_tiny.render("[Listening for live audio triggers, PLL phase anchors, and harmonic shifts...]", True, (90, 110, 135)), (term_rect.x + 10, term_rect.y + 20))
         else:
-            ly = term_rect.y + 18
+            ly = term_rect.y + 20
             for log_entry in display_logs:
-                if "[KICK]" in log_entry:
-                    txt_col = (80, 255, 150)
-                elif "[808 SUB]" in log_entry:
+                if "[PLL]" in log_entry or "[PLL SYNC]" in log_entry:
+                    txt_col = (0, 240, 255)
+                elif "[808 SUB]" in log_entry or "[808]" in log_entry:
                     txt_col = (210, 120, 255)
                 elif "[808 TAIL GATED]" in log_entry:
-                    txt_col = (180, 140, 90)
+                    txt_col = (255, 140, 60)
+                elif "[HARMONY]" in log_entry:
+                    txt_col = (255, 110, 220)
+                elif "[CHROMA]" in log_entry:
+                    txt_col = (0, 255, 140)
+                elif "[KICK]" in log_entry:
+                    txt_col = (80, 255, 150)
                 elif "[SNARE]" in log_entry:
                     txt_col = (255, 230, 60)
                 elif "[HIHAT]" in log_entry:
                     txt_col = (130, 220, 255)
                 elif "[DROP]" in log_entry:
-                    txt_col = (255, 80, 80)
+                    txt_col = (255, 70, 70)
                 elif "[SECTION]" in log_entry:
-                    txt_col = (0, 240, 255)
-                elif "[PLL SYNC]" in log_entry:
-                    txt_col = (120, 255, 90)
+                    txt_col = (60, 220, 240)
                 elif "[ENGINE]" in log_entry:
                     txt_col = (255, 205, 50)
                 else:

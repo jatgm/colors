@@ -7,6 +7,7 @@ STRICT REQUIREMENT: Zero emojis. Pure high-tech telemetry and geometric accents.
 
 import time
 import math
+from collections import deque
 import pygame
 from config import (
     HUD_AUTO_HIDE_DELAY,
@@ -96,6 +97,8 @@ class HUD:
         self.btn_console = None
         self.console_close_btn = None
         self.console_rect = None
+        self.telemetry_history = deque(maxlen=140)
+        self.spectrum_peaks = [0.0] * 24
 
         self._build_layout()
 
@@ -653,6 +656,8 @@ class HUD:
             self.alpha = max(0.0, self.alpha - HUD_FADE_SPEED * 255.0 * dt)
 
     def render(self, screen, audio_mgr, visualizer, display_mgr, sync_mgr, audio_state, is_dual, razer_mgr=None, happylighting_mgr=None, lenovo_mgr=None, media_mgr=None):
+        self._update_telemetry_history(audio_state, visualizer)
+
         if not self.warning_dismissed:
             self._render_warning_dialog(screen)
             return
@@ -942,9 +947,7 @@ class HUD:
         # 3. Waveform Song Progress Bar Deck
         if hasattr(self, "waveform_rect"):
             wf_rect = self.waveform_rect
-            if alpha_int > 0:
-                pygame.draw.rect(screen, (12, 16, 26), wf_rect, border_radius=4)
-            pygame.draw.rect(hud_surf, (12, 16, 26, 255), wf_rect, border_radius=4)
+            pygame.draw.rect(hud_surf, (12, 16, 26, alpha_int), wf_rect, border_radius=4)
             pygame.draw.rect(hud_surf, (30, 48, 68, alpha_int), wf_rect, width=1, border_radius=4)
             self._draw_tech_corner_brackets(hud_surf, wf_rect, (45, 72, 100, alpha_int), bracket_len=6, width=1)
 
@@ -1814,21 +1817,401 @@ class HUD:
 
         screen.blit(overlay, (0, 0))
 
+    def _update_telemetry_history(self, audio_state, visualizer):
+        """Record real-time audio and trigger conversion telemetry frames into rolling history."""
+        if not hasattr(self, "telemetry_history"):
+            self.telemetry_history = deque(maxlen=140)
+        if not hasattr(self, "spectrum_peaks"):
+            self.spectrum_peaks = [0.0] * 24
+
+        if not audio_state:
+            audio_state = {}
+
+        # Audio inputs & thresholds
+        rms = float(audio_state.get("total_level", 0.0) or 0.0)
+        peak = float(audio_state.get("peak", audio_state.get("raw_peak", 0.0)) or 0.0)
+        b_flux = float(audio_state.get("bass_flux", 0.0) or 0.0)
+        b_thresh = float(audio_state.get("dynamic_thresh", 0.0) or 0.0)
+        h_flux = float(audio_state.get("high_flux", 0.0) or 0.0)
+        h_thresh = float(audio_state.get("high_thresh", 0.0) or 0.0)
+        s_flux = float(audio_state.get("sub_flux", 0.0) or 0.0)
+        s_thresh = float(audio_state.get("sub_thresh", 0.0) or 0.0)
+
+        # Transients & PLL
+        grid_mult = float(audio_state.get("grid_mult", 1.0) or 1.0)
+        beat_phase = float(audio_state.get("beat_phase", 0.0) or 0.0)
+        is_attack = bool(audio_state.get("is_attack_transient", True))
+        is_downbeat = bool(audio_state.get("is_downbeat", False))
+        is_backbeat = bool(audio_state.get("is_backbeat", False))
+
+        # Triggers / Hits
+        logs = audio_state.get("telemetry_logs", [])
+        last_log = logs[-1] if (logs and isinstance(logs, (list, deque))) else ""
+
+        is_kick = bool(audio_state.get("is_kick", False)) or ("[KICK]" in last_log)
+        is_snare = bool(audio_state.get("is_snare", False)) or ("[SNARE]" in last_log)
+        is_808 = bool(audio_state.get("is_808", False)) or ("[808 SUB]" in last_log)
+        is_hihat = bool(audio_state.get("is_hihat", False)) or ("[HIHAT]" in last_log)
+        is_drop = bool(audio_state.get("is_drop", False)) or ("[DROP]" in last_log)
+
+        # Visualizer Strobe State
+        strobe_alpha = 0.0
+        strobe_color = (0, 240, 255)
+        if visualizer:
+            strobe_alpha = float(getattr(visualizer, "last_eff_intensity_0", getattr(visualizer, "alpha", 0.0)) or 0.0)
+            if strobe_alpha <= 0.0 and hasattr(visualizer, "kick_intensity"):
+                strobe_alpha = max(
+                    getattr(visualizer, "kick_intensity", 0.0),
+                    getattr(visualizer, "snare_intensity", 0.0),
+                    getattr(visualizer, "hihat_intensity", 0.0),
+                )
+            raw_c = getattr(visualizer, "current_color", (0, 240, 255))
+            if isinstance(raw_c, (tuple, list)) and len(raw_c) >= 3:
+                strobe_color = (int(raw_c[0]), int(raw_c[1]), int(raw_c[2]))
+
+        # Update 24 spectrum peaks
+        raw_bars = audio_state.get("spectrum_bars", None)
+        if raw_bars is not None and len(raw_bars) >= 24:
+            for idx in range(24):
+                val = float(raw_bars[idx])
+                if val > self.spectrum_peaks[idx]:
+                    self.spectrum_peaks[idx] = min(1.0, val)
+                else:
+                    self.spectrum_peaks[idx] = max(0.0, self.spectrum_peaks[idx] - 0.015)
+        else:
+            for idx in range(24):
+                self.spectrum_peaks[idx] = max(0.0, self.spectrum_peaks[idx] - 0.015)
+
+        self.telemetry_history.append({
+            "rms": rms,
+            "peak": peak,
+            "b_flux": b_flux,
+            "b_thresh": b_thresh,
+            "h_flux": h_flux,
+            "h_thresh": h_thresh,
+            "s_flux": s_flux,
+            "s_thresh": s_thresh,
+            "grid_mult": grid_mult,
+            "beat_phase": beat_phase,
+            "is_attack": is_attack,
+            "is_downbeat": is_downbeat,
+            "is_backbeat": is_backbeat,
+            "is_kick": is_kick,
+            "is_snare": is_snare,
+            "is_808": is_808,
+            "is_hihat": is_hihat,
+            "is_drop": is_drop,
+            "strobe_alpha": min(1.0, max(0.0, strobe_alpha)),
+            "strobe_color": strobe_color,
+        })
+
+    def _render_console_visualizer(self, c_surf, audio_state, visualizer, vis_rect, accent_col):
+        """Render prominent cyber-studio engine visualizer showing real-time transients, frequency bands, and hit/strobe conversion."""
+        # 1. Deck Backing and Tech Brackets
+        pygame.draw.rect(c_surf, (8, 12, 20, 240), vis_rect, border_radius=5)
+        pygame.draw.rect(c_surf, (24, 38, 56, 180), vis_rect, width=1, border_radius=5)
+        self._draw_tech_corner_brackets(c_surf, vis_rect, (*accent_col, 180), bracket_len=8, width=1)
+
+        # 2. Pipeline Flow Header Bar
+        pipe_h = 18
+        pipe_rect = pygame.Rect(vis_rect.x, vis_rect.y, vis_rect.width, pipe_h)
+        pygame.draw.rect(c_surf, (14, 20, 32, 210), pipe_rect, border_top_left_radius=5, border_top_right_radius=5)
+        pipe_str = "// CONVERSION PIPELINE: AUDIO INPUT -> SPECTRAL FLUX & DYNAMIC THRESHOLDS -> PLL GRID FILTER -> HIT DETONATION -> STROBE FLASH"
+        c_surf.blit(self.font_tiny.render(pipe_str, True, (110, 190, 240)), (vis_rect.x + 8, vis_rect.y + 2))
+
+        hist_len = len(self.telemetry_history)
+        fps_str = f"BUFFER: {hist_len} FRAMES | LATENCY: <1.2ms"
+        fps_s = self.font_tiny.render(fps_str, True, (80, 130, 175))
+        c_surf.blit(fps_s, (vis_rect.right - fps_s.get_width() - 8, vis_rect.y + 2))
+        pygame.draw.line(c_surf, (26, 42, 62, 160), (vis_rect.x + 4, vis_rect.y + pipe_h), (vis_rect.right - 4, vis_rect.y + pipe_h))
+
+        # 3. Split Deck: Left Scope (64% width), Right Diagnostics (36% width)
+        inner_y = vis_rect.y + pipe_h + 3
+        inner_h = max(80, vis_rect.height - pipe_h - 6)
+        scope_w = int((vis_rect.width - 16) * 0.64)
+        scope_rect = pygame.Rect(vis_rect.x + 5, inner_y, scope_w, inner_h)
+
+        diag_x = scope_rect.right + 6
+        diag_w = vis_rect.width - (diag_x - vis_rect.x) - 5
+        diag_rect = pygame.Rect(diag_x, inner_y, diag_w, inner_h)
+
+        # -------------------------------------------------------------
+        # LEFT SCOPE: Waveform, Flux Thresholds & Detonation/Flash Response
+        # -------------------------------------------------------------
+        pygame.draw.rect(c_surf, (5, 8, 14, 245), scope_rect, border_radius=4)
+        pygame.draw.rect(c_surf, (20, 32, 48, 160), scope_rect, width=1, border_radius=4)
+
+        det_h = 18
+        scope_up_h = int((inner_h - det_h - 10) * 0.54)
+        scope_up_rect = pygame.Rect(scope_rect.x + 4, scope_rect.y + 3, scope_rect.width - 8, scope_up_h)
+        det_rect = pygame.Rect(scope_rect.x + 4, scope_up_rect.bottom + 2, scope_rect.width - 8, det_h)
+        scope_low_rect = pygame.Rect(scope_rect.x + 4, det_rect.bottom + 2, scope_rect.width - 8, scope_rect.bottom - det_rect.bottom - 5)
+
+        # Scope Up: Audio Waveform, Bass Flux & Dynamic Threshold Curves
+        c_surf.blit(self.font_tiny.render("AUDIO INPUT: SPECTRAL FLUX (CYAN) VS DYNAMIC THRESHOLD (ORANGE) & 808 TRANSIENT", True, (90, 160, 210)), (scope_up_rect.x + 6, scope_up_rect.y + 2))
+
+        up_base_y = scope_up_rect.bottom - 4
+        up_top_y = scope_up_rect.y + 14
+        up_plot_h = max(10, up_base_y - up_top_y)
+
+        # Horizontal grid reference lines
+        mid_y = up_base_y - up_plot_h // 2
+        pygame.draw.line(c_surf, (20, 32, 48, 100), (scope_up_rect.x + 4, up_top_y), (scope_up_rect.right - 4, up_top_y), 1)
+        pygame.draw.line(c_surf, (20, 32, 48, 80), (scope_up_rect.x + 4, mid_y), (scope_up_rect.right - 4, mid_y), 1)
+        c_surf.blit(self.font_tiny.render("1.0", True, (50, 80, 110)), (scope_up_rect.right - 22, up_top_y - 5))
+        c_surf.blit(self.font_tiny.render("0.5", True, (50, 80, 110)), (scope_up_rect.right - 22, mid_y - 5))
+
+        px_left = scope_up_rect.x + 6
+        px_right = scope_up_rect.right - 6
+        span_w = max(10, px_right - px_left)
+        max_buf = max(2, self.telemetry_history.maxlen)
+        offset = max_buf - hist_len
+
+        def get_item_x(idx):
+            return px_left + int((idx + offset) * span_w / (max_buf - 1))
+
+        # Vertical PLL Beat Grid Lines & Detonations
+        if hist_len > 0:
+            for i, itm in enumerate(self.telemetry_history):
+                xi = get_item_x(i)
+                if itm.get("is_downbeat"):
+                    pygame.draw.line(c_surf, (0, 240, 255, 60), (xi, scope_up_rect.y + 2), (xi, scope_low_rect.bottom - 2), 1)
+                    c_surf.blit(self.font_tiny.render("BEAT", True, (0, 240, 255, 80)), (xi - 10, scope_up_rect.y + 2))
+                elif itm.get("is_backbeat"):
+                    pygame.draw.line(c_surf, (255, 220, 50, 45), (xi, scope_up_rect.y + 2), (xi, scope_low_rect.bottom - 2), 1)
+
+        # Plot curves if >= 2 points
+        if hist_len >= 2:
+            # 1. Shaded RMS energy contour
+            poly_rms = [(get_item_x(0), up_base_y)]
+            for i, itm in enumerate(self.telemetry_history):
+                xi = get_item_x(i)
+                yi = up_base_y - int(min(1.0, itm["rms"] * 2.2) * up_plot_h)
+                poly_rms.append((xi, yi))
+            poly_rms.append((get_item_x(hist_len - 1), up_base_y))
+            if len(poly_rms) >= 3:
+                pygame.draw.polygon(c_surf, (0, 140, 200, 32), poly_rms)
+
+            # 2. Dynamic Threshold Line (Orange)
+            pts_thresh = []
+            for i, itm in enumerate(self.telemetry_history):
+                xi = get_item_x(i)
+                yi = up_base_y - int(min(1.0, itm["b_thresh"]) * up_plot_h)
+                pts_thresh.append((xi, yi))
+            if len(pts_thresh) >= 2:
+                pygame.draw.lines(c_surf, (255, 145, 30), False, pts_thresh, 1)
+
+            # 3. Bass Flux Line (Neon Cyan/Green) & Breach Highlights
+            pts_flux = []
+            for i, itm in enumerate(self.telemetry_history):
+                xi = get_item_x(i)
+                yi = up_base_y - int(min(1.2, itm["b_flux"]) * up_plot_h)
+                pts_flux.append((xi, yi))
+
+                # Highlight threshold breaches (instant where audio engine converts to trigger)
+                if itm["b_flux"] >= itm["b_thresh"] and itm["b_flux"] > 0.05:
+                    th_y = up_base_y - int(min(1.0, itm["b_thresh"]) * up_plot_h)
+                    pygame.draw.line(c_surf, (0, 255, 180, 120), (xi, th_y), (xi, yi), 2)
+
+                # 808 transient attack vs tail markers
+                if itm.get("s_flux", 0.0) > 0.12:
+                    if not itm.get("is_attack", True):
+                        pygame.draw.line(c_surf, (255, 130, 60), (xi, up_base_y - 4), (xi, up_base_y), 2)
+                    elif itm.get("is_808", False):
+                        pygame.draw.circle(c_surf, (210, 100, 255), (xi, up_base_y - 3), 2)
+
+            if len(pts_flux) >= 2:
+                pygame.draw.lines(c_surf, (0, 255, 160), False, pts_flux, 2)
+
+        # Detonation Conversion Track
+        pygame.draw.rect(c_surf, (10, 15, 24, 230), det_rect, border_radius=2)
+        pygame.draw.rect(c_surf, (24, 38, 56, 160), det_rect, width=1, border_radius=2)
+        c_surf.blit(self.font_tiny.render("DETONATIONS:", True, (75, 135, 185)), (det_rect.x + 6, det_rect.y + 3))
+
+        if hist_len > 0:
+            for i, itm in enumerate(self.telemetry_history):
+                xi = get_item_x(i)
+                if itm.get("is_drop"):
+                    pygame.draw.rect(c_surf, (255, 45, 45), (xi - 13, det_rect.y + 1, 26, 14), border_radius=2)
+                    c_surf.blit(self.font_tiny.render("DROP", True, (255, 255, 255)), (xi - 11, det_rect.y + 2))
+                    pygame.draw.line(c_surf, (255, 60, 60, 160), (xi, scope_up_rect.y + 2), (xi, scope_low_rect.bottom - 2), 1)
+                elif itm.get("is_kick"):
+                    pygame.draw.rect(c_surf, (0, 205, 110), (xi - 13, det_rect.y + 1, 26, 14), border_radius=2)
+                    c_surf.blit(self.font_tiny.render("KICK", True, (8, 20, 12)), (xi - 11, det_rect.y + 2))
+                    pygame.draw.line(c_surf, (0, 255, 130, 150), (xi, scope_up_rect.y + 2), (xi, scope_low_rect.bottom - 2), 1)
+                elif itm.get("is_808"):
+                    pygame.draw.rect(c_surf, (185, 75, 245), (xi - 11, det_rect.y + 1, 23, 14), border_radius=2)
+                    c_surf.blit(self.font_tiny.render("808", True, (255, 255, 255)), (xi - 9, det_rect.y + 2))
+                    pygame.draw.line(c_surf, (210, 100, 255, 150), (xi, scope_up_rect.y + 2), (xi, scope_low_rect.bottom - 2), 1)
+                elif itm.get("is_snare"):
+                    pygame.draw.rect(c_surf, (245, 205, 45), (xi - 15, det_rect.y + 1, 30, 14), border_radius=2)
+                    c_surf.blit(self.font_tiny.render("SNARE", True, (22, 18, 5)), (xi - 13, det_rect.y + 2))
+                    pygame.draw.line(c_surf, (255, 230, 60, 150), (xi, scope_up_rect.y + 2), (xi, scope_low_rect.bottom - 2), 1)
+                elif itm.get("is_hihat"):
+                    pygame.draw.rect(c_surf, (45, 185, 235), (xi - 11, det_rect.y + 1, 22, 14), border_radius=2)
+                    c_surf.blit(self.font_tiny.render("HAT", True, (10, 20, 25)), (xi - 9, det_rect.y + 2))
+
+        # Scope Low: Output Strobe Intensity & Decay Envelope (Screen & Hardware Response)
+        c_surf.blit(self.font_tiny.render("CONVERTED STROBE OUTPUT FLASH & DECAY (SCREEN & HARDWARE LIGHTING)", True, (110, 165, 215)), (scope_low_rect.x + 6, scope_low_rect.y + 2))
+
+        low_base_y = scope_low_rect.bottom - 4
+        low_top_y = scope_low_rect.y + 14
+        low_plot_h = max(10, low_base_y - low_top_y)
+
+        if hist_len >= 2:
+            poly_flash = [(get_item_x(0), low_base_y)]
+            pts_flash = []
+            for i, itm in enumerate(self.telemetry_history):
+                xi = get_item_x(i)
+                yi = low_base_y - int(itm["strobe_alpha"] * low_plot_h)
+                poly_flash.append((xi, yi))
+                pts_flash.append((xi, yi))
+            poly_flash.append((get_item_x(hist_len - 1), low_base_y))
+
+            last_c = self.telemetry_history[-1].get("strobe_color", (0, 240, 255))
+            if len(poly_flash) >= 3:
+                pygame.draw.polygon(c_surf, (*last_c, 65), poly_flash)
+            if len(pts_flash) >= 2:
+                pygame.draw.lines(c_surf, (*last_c, 235), False, pts_flash, 2)
+
+        # -------------------------------------------------------------
+        # RIGHT DIAGNOSTICS: 24-Band Spectrum, PLL Radar & 808 Diagnostics
+        # -------------------------------------------------------------
+        pygame.draw.rect(c_surf, (5, 8, 14, 245), diag_rect, border_radius=4)
+        pygame.draw.rect(c_surf, (20, 32, 48, 160), diag_rect, width=1, border_radius=4)
+
+        c_surf.blit(self.font_tiny.render("24-BAND SPECTRUM ANALYZER & PLL / 808 DIAGNOSTICS", True, (100, 210, 255)), (diag_rect.x + 8, diag_rect.y + 3))
+
+        # 24-Band Spectrum Bars
+        spec_top_y = diag_rect.y + 18
+        spec_base_y = diag_rect.y + int(diag_rect.height * 0.52)
+        spec_bar_h = max(10, spec_base_y - spec_top_y)
+        spec_w = diag_rect.width - 16
+        num_bars = 24
+        bar_gap = 2
+        bar_w = max(3, (spec_w - (num_bars - 1) * bar_gap) // num_bars)
+        start_bx = diag_rect.x + 8 + (spec_w - (num_bars * (bar_w + bar_gap) - bar_gap)) // 2
+
+        raw_bars = audio_state.get("spectrum_bars", None)
+        for b in range(num_bars):
+            bx = start_bx + b * (bar_w + bar_gap)
+            if b < 4:
+                b_col = (180, 80, 255)    # Sub-bass / 808
+            elif b < 9:
+                b_col = (0, 220, 255)     # Bass / Kick
+            elif b < 15:
+                b_col = (40, 230, 140)    # Midrange
+            elif b < 20:
+                b_col = (255, 215, 40)    # High-Mid / Snare
+            else:
+                b_col = (255, 80, 210)    # High / Air / Hi-hat
+
+            val = float(raw_bars[b]) if (raw_bars is not None and b < len(raw_bars)) else 0.0
+            val = min(1.0, max(0.0, val))
+            bh = int(val * spec_bar_h)
+            if bh > 0:
+                pygame.draw.rect(c_surf, (*b_col, 210), (bx, spec_base_y - bh, bar_w, bh), border_radius=1)
+
+            # Peak hold cap
+            if hasattr(self, "spectrum_peaks") and b < len(self.spectrum_peaks):
+                pv = self.spectrum_peaks[b]
+                if pv > 0.03:
+                    py = spec_base_y - int(pv * spec_bar_h)
+                    pygame.draw.line(c_surf, (240, 250, 255), (bx, py), (bx + bar_w - 1, py), 1)
+
+        # Zone labels below spectrum
+        lbl_y = spec_base_y + 3
+        c_surf.blit(self.font_tiny.render("SUB", True, (180, 80, 255)), (start_bx, lbl_y))
+        c_surf.blit(self.font_tiny.render("BASS", True, (0, 220, 255)), (start_bx + 5 * (bar_w + bar_gap), lbl_y))
+        c_surf.blit(self.font_tiny.render("MID", True, (40, 230, 140)), (start_bx + 11 * (bar_w + bar_gap), lbl_y))
+        c_surf.blit(self.font_tiny.render("SNARE", True, (255, 215, 40)), (start_bx + 16 * (bar_w + bar_gap), lbl_y))
+        c_surf.blit(self.font_tiny.render("AIR", True, (255, 80, 210)), (start_bx + 21 * (bar_w + bar_gap), lbl_y))
+
+        # Dynamic Threshold overlay on bass & snare
+        b_th = float(audio_state.get("dynamic_thresh", 0.0) or 0.0)
+        if b_th > 0:
+            th_y_spec = spec_base_y - int(min(1.0, b_th) * spec_bar_h)
+            pygame.draw.line(c_surf, (255, 145, 30, 180), (start_bx, th_y_spec), (start_bx + 9 * (bar_w + bar_gap), th_y_spec), 1)
+
+        # Lower Gauges: PLL Phase Runway & 808 Transient vs Tail Meter
+        rem_y = lbl_y + 14
+        rem_h = diag_rect.bottom - rem_y - 4
+
+        # Gauge 1: PLL Phase Runway & Multiplier
+        pll_h = min(26, rem_h // 2 - 2)
+        pll_rect = pygame.Rect(diag_rect.x + 8, rem_y, diag_rect.width - 16, pll_h)
+        pygame.draw.rect(c_surf, (10, 15, 24, 210), pll_rect, border_radius=3)
+        pygame.draw.rect(c_surf, (24, 38, 56, 140), pll_rect, width=1, border_radius=3)
+
+        b_phase = float(audio_state.get("beat_phase", 0.0) or 0.0)
+        g_mult = float(audio_state.get("grid_mult", 1.0) or 1.0)
+        on_grid = g_mult > 1.05
+        g_col = (0, 255, 140) if on_grid else ((255, 150, 40) if g_mult < 0.95 else (140, 170, 200))
+        g_status = "BOOST" if on_grid else ("GATED" if g_mult < 0.95 else "NORM")
+        c_surf.blit(self.font_tiny.render(f"PLL PHASE [ 1 . 2 . 3 . 4 ] | MULT: {g_mult:.2f}x ({g_status})", True, g_col), (pll_rect.x + 6, pll_rect.y + 2))
+
+        # Phase Runway track & cursor
+        p_track_y = pll_rect.y + 16
+        if p_track_y < pll_rect.bottom - 2:
+            p_tw = pll_rect.width - 12
+            pygame.draw.line(c_surf, (30, 48, 70), (pll_rect.x + 6, p_track_y), (pll_rect.x + 6 + p_tw, p_track_y), 2)
+            for q in [0.0, 0.25, 0.5, 0.75, 1.0]:
+                qx = pll_rect.x + 6 + int(q * p_tw)
+                pygame.draw.line(c_surf, (60, 95, 135), (qx, p_track_y - 2), (qx, p_track_y + 2), 1)
+            cx = pll_rect.x + 6 + int(min(1.0, max(0.0, b_phase)) * p_tw)
+            pygame.draw.circle(c_surf, (0, 240, 255), (cx, p_track_y), 3)
+
+        # Gauge 2: 808 Transient Attack vs Gated Tail
+        att_h = min(26, rem_h - pll_h - 4)
+        att_rect = pygame.Rect(diag_rect.x + 8, pll_rect.bottom + 3, diag_rect.width - 16, att_h)
+        pygame.draw.rect(c_surf, (10, 15, 24, 210), att_rect, border_radius=3)
+        pygame.draw.rect(c_surf, (24, 38, 56, 140), att_rect, width=1, border_radius=3)
+
+        is_attack = bool(audio_state.get("is_attack_transient", True))
+        s_flux = float(audio_state.get("sub_flux", 0.0) or 0.0)
+        s_thresh = float(audio_state.get("sub_thresh", 0.0) or 0.0)
+        if is_attack:
+            att_col = (0, 255, 160)
+            att_txt = "808 STATUS: ATTACK TRANSIENT [TRIGGER PASS]"
+        else:
+            att_col = (255, 140, 50)
+            att_txt = "808 STATUS: SUSTAIN TAIL [GATED / SUPPRESSED]"
+        c_surf.blit(self.font_tiny.render(att_txt, True, att_col), (att_rect.x + 6, att_rect.y + 2))
+
+        # 808 meter bar
+        att_bar_y = att_rect.y + 16
+        if att_bar_y < att_rect.bottom - 2:
+            a_bw = att_rect.width - 12
+            pygame.draw.rect(c_surf, (18, 26, 38), (att_rect.x + 6, att_bar_y, a_bw, 5), border_radius=2)
+            fill_w = int(min(1.0, s_flux / max(0.01, s_thresh * 1.5 if s_thresh > 0 else 0.5)) * a_bw)
+            if fill_w > 0:
+                pygame.draw.rect(c_surf, (*att_col, 210), (att_rect.x + 6, att_bar_y, fill_w, 5), border_radius=2)
+            if s_thresh > 0:
+                th_x = att_rect.x + 6 + int(min(1.0, s_thresh / (s_thresh * 1.5)) * a_bw)
+                pygame.draw.line(c_surf, (255, 255, 255), (th_x, att_bar_y - 2), (th_x, att_bar_y + 7), 1)
+
     def _render_console_log(self, screen, audio_state, visualizer, audio_mgr=None):
         """Render high-tech cyber-studio real-time logic and math telemetry console view."""
         if not audio_state:
             audio_state = {}
 
-        mon = self.active_mon_rect
-        c_w = min(1040, mon.width - 32)
-        c_h = min(360, max(250, mon.height - 320))
-        c_x = mon.x + (mon.width - c_w) // 2
+        if not hasattr(self, "telemetry_history") or len(self.telemetry_history) == 0:
+            self._update_telemetry_history(audio_state, visualizer)
 
-        # If main HUD is visible and non-zero alpha, dock above panel, else anchor at lower bottom
+        mon = self.active_mon_rect
+        c_w = min(1180, mon.width - 24)
+
+        # Scale height based on available screen geometry
         if self.alpha > 20.0 and hasattr(self, "panel_rect"):
-            c_y = max(mon.y + 12, self.panel_rect.y - c_h - 10)
+            avail_h = max(340, self.panel_rect.y - mon.y - 14)
+            c_h = min(580, avail_h)
+            c_y = max(mon.y + 10, self.panel_rect.y - c_h - 8)
         else:
-            c_y = mon.y + mon.height - c_h - 16
+            avail_h = max(340, mon.height - 40)
+            c_h = min(600, avail_h)
+            c_y = mon.y + (mon.height - c_h) // 2
+
+        c_x = mon.x + (mon.width - c_w) // 2
 
         self.console_rect = pygame.Rect(c_x, c_y, c_w, c_h)
         c_surf = pygame.Surface((c_w, c_h), pygame.SRCALPHA)
@@ -1877,9 +2260,14 @@ class HUD:
         x_surf = self.font_tiny.render("X", True, (255, 100, 100))
         c_surf.blit(x_surf, (close_local.x + 6, close_local.y + 3))
 
-        # 2. Live Trigger Math & Threshold Dashboard (Top row, height ~72px)
-        math_y = 38
-        math_h = 70
+        # 2. Large Visualizer Deck: Transients, Spectrum & Detonation Scope
+        math_h = 66
+        vis_deck_h = max(130, min(230, c_h - hdr_h - 4 - math_h - 90))
+        vis_rect = pygame.Rect(12, hdr_h + 4, c_w - 24, vis_deck_h)
+        self._render_console_visualizer(c_surf, audio_state, visualizer, vis_rect, accent_col)
+
+        # 3. Live Trigger Math & Threshold Dashboard
+        math_y = vis_rect.bottom + 6
         col_gap = 8
         col_w = (c_w - 24 - 2 * col_gap) // 3
 
@@ -1888,7 +2276,7 @@ class HUD:
         pygame.draw.rect(c_surf, (12, 16, 26, 210), card_a, border_radius=4)
         pygame.draw.rect(c_surf, (30, 48, 70, 140), card_a, width=1, border_radius=4)
         a_title = self.font_tiny.render("SPECTRAL FLUX VS DYNAMIC THRESHOLDS", True, (100, 210, 255))
-        c_surf.blit(a_title, (card_a.x + 8, card_a.y + 5))
+        c_surf.blit(a_title, (card_a.x + 8, card_a.y + 4))
 
         b_flux = audio_state.get("bass_flux", 0.0)
         b_thresh = audio_state.get("dynamic_thresh", 0.0)
@@ -1902,28 +2290,28 @@ class HUD:
         b_trig = b_flux >= b_thresh and b_flux > 0.05
         b_col = (0, 255, 140) if b_trig else (140, 160, 180)
         b_str = f"KICK: flux {b_flux:.2f} / th {b_thresh:.2f} ({b_ratio:.2f}x) {'[TRIG]' if b_trig else ''}"
-        c_surf.blit(self.font_tiny.render(b_str, True, b_col), (card_a.x + 8, card_a.y + 20))
+        c_surf.blit(self.font_tiny.render(b_str, True, b_col), (card_a.x + 8, card_a.y + 18))
 
         # High flux line (Snare)
         h_ratio = (h_flux / max(1e-4, h_thresh)) if h_thresh > 0 else 0.0
         h_trig = h_flux >= h_thresh and h_flux > 0.05
         h_col = (255, 220, 50) if h_trig else (140, 160, 180)
         h_str = f"SNARE: flux {h_flux:.2f} / th {h_thresh:.2f} ({h_ratio:.2f}x) {'[TRIG]' if h_trig else ''}"
-        c_surf.blit(self.font_tiny.render(h_str, True, h_col), (card_a.x + 8, card_a.y + 35))
+        c_surf.blit(self.font_tiny.render(h_str, True, h_col), (card_a.x + 8, card_a.y + 32))
 
         # Sub-bass flux line (808)
         s_ratio = (s_flux / max(1e-4, s_thresh)) if s_thresh > 0 else 0.0
         s_trig = s_flux >= s_thresh and s_flux > 0.05
         s_col = (200, 100, 255) if s_trig else (140, 160, 180)
         s_str = f"808 SUB: flux {s_flux:.2f} / th {s_thresh:.2f} ({s_ratio:.2f}x) {'[TRIG]' if s_trig else ''}"
-        c_surf.blit(self.font_tiny.render(s_str, True, s_col), (card_a.x + 8, card_a.y + 50))
+        c_surf.blit(self.font_tiny.render(s_str, True, s_col), (card_a.x + 8, card_a.y + 46))
 
         # Card B: PLL Grid & 808 Tail Gating
         card_b = pygame.Rect(card_a.right + col_gap, math_y, col_w, math_h)
         pygame.draw.rect(c_surf, (12, 16, 26, 210), card_b, border_radius=4)
         pygame.draw.rect(c_surf, (30, 48, 70, 140), card_b, width=1, border_radius=4)
         b_title = self.font_tiny.render("PHASE-LOCKED LOOP (PLL) & 808 ISOLATION", True, (100, 210, 255))
-        c_surf.blit(b_title, (card_b.x + 8, card_b.y + 5))
+        c_surf.blit(b_title, (card_b.x + 8, card_b.y + 4))
 
         grid_mult = audio_state.get("grid_mult", 1.0)
         is_attack = audio_state.get("is_attack_transient", True)
@@ -1931,58 +2319,58 @@ class HUD:
         pll_col = (0, 255, 140) if on_grid else ((255, 160, 40) if grid_mult < 0.95 else (140, 170, 200))
         pll_status = "ON-GRID BOOST" if on_grid else ("OFF-BEAT SUPPRESS" if grid_mult < 0.95 else "NEUTRAL")
         pll_str = f"PLL Grid Multiplier: {grid_mult:.2f}x -> {pll_status}"
-        c_surf.blit(self.font_tiny.render(pll_str, True, pll_col), (card_b.x + 8, card_b.y + 20))
+        c_surf.blit(self.font_tiny.render(pll_str, True, pll_col), (card_b.x + 8, card_b.y + 18))
 
         att_str = "808 Transient: ATTACK IMPACT" if is_attack else "808 Transient: SUSTAIN TAIL (GATED)"
         att_col = (0, 240, 255) if is_attack else (255, 130, 80)
-        c_surf.blit(self.font_tiny.render(att_str, True, att_col), (card_b.x + 8, card_b.y + 35))
+        c_surf.blit(self.font_tiny.render(att_str, True, att_col), (card_b.x + 8, card_b.y + 32))
 
         eng_note = "Smart Mode: Bayesian Prior + 808 Filter" if is_c2 else "Classic Mode: Raw Peak Unconstrained"
-        c_surf.blit(self.font_tiny.render(eng_note, True, (120, 145, 175)), (card_b.x + 8, card_b.y + 50))
+        c_surf.blit(self.font_tiny.render(eng_note, True, (120, 145, 175)), (card_b.x + 8, card_b.y + 46))
 
         # Card C: Audio Gain, Energy & Bands
         card_c = pygame.Rect(card_b.right + col_gap, math_y, col_w, math_h)
         pygame.draw.rect(c_surf, (12, 16, 26, 210), card_c, border_radius=4)
         pygame.draw.rect(c_surf, (30, 48, 70, 140), card_c, width=1, border_radius=4)
         c_title = self.font_tiny.render("ENERGY, AGC GAIN & BAND ENERGIES", True, (100, 210, 255))
-        c_surf.blit(c_title, (card_c.x + 8, card_c.y + 5))
+        c_surf.blit(c_title, (card_c.x + 8, card_c.y + 4))
 
         tot_lvl = audio_state.get("total_level", 0.0)
         peak_lvl = audio_state.get("peak", audio_state.get("raw_peak", 0.0))
         sens = audio_mgr.get_sensitivity() if (audio_mgr and hasattr(audio_mgr, "get_sensitivity")) else 1.0
         preamp = audio_mgr.get_preamp_gain() if (audio_mgr and hasattr(audio_mgr, "get_preamp_gain")) else 1.0
-        c_surf.blit(self.font_tiny.render(f"RMS: {tot_lvl:.3f} | Peak: {peak_lvl:.3f} | Sens: {sens:.1f}x | Gain: {preamp:.1f}x", True, (160, 185, 215)), (card_c.x + 8, card_c.y + 20))
+        c_surf.blit(self.font_tiny.render(f"RMS: {tot_lvl:.3f} | Peak: {peak_lvl:.3f} | Sens: {sens:.1f}x | Gain: {preamp:.1f}x", True, (160, 185, 215)), (card_c.x + 8, card_c.y + 18))
 
         b_sub = audio_state.get("bass_level", 0.0)
         b_mid = audio_state.get("mid_level", 0.0)
         b_hi = audio_state.get("high_level", 0.0)
-        c_surf.blit(self.font_tiny.render(f"Bands: Sub/Bass {b_sub:.2f} | Mid {b_mid:.2f} | High {b_hi:.2f}", True, (140, 170, 200)), (card_c.x + 8, card_c.y + 35))
+        c_surf.blit(self.font_tiny.render(f"Bands: Sub/Bass {b_sub:.2f} | Mid {b_mid:.2f} | High {b_hi:.2f}", True, (140, 170, 200)), (card_c.x + 8, card_c.y + 32))
 
         # Strobe visual state
         strobe_alpha = getattr(visualizer, "alpha", 0.0) if visualizer else 0.0
         is_solid = getattr(visualizer, "solid_color_active", False)
         vis_st = f"Strobe Alpha: {strobe_alpha:.2f} | Solid Mode: {'ACTIVE' if is_solid else 'OFF'}"
-        c_surf.blit(self.font_tiny.render(vis_st, True, (255, 205, 50) if is_solid else (120, 145, 175)), (card_c.x + 8, card_c.y + 50))
+        c_surf.blit(self.font_tiny.render(vis_st, True, (255, 205, 50) if is_solid else (120, 145, 175)), (card_c.x + 8, card_c.y + 46))
 
-        # 3. Live Rationale Terminal Stream (Bottom section)
-        term_y = math_y + math_h + 8
-        term_h = c_h - term_y - 10
+        # 4. Live Rationale Terminal Stream (Bottom section)
+        term_y = math_y + math_h + 6
+        term_h = max(40, c_h - term_y - 8)
         term_rect = pygame.Rect(12, term_y, c_w - 24, term_h)
         pygame.draw.rect(c_surf, (5, 7, 12, 240), term_rect, border_radius=4)
         pygame.draw.rect(c_surf, (24, 38, 56, 160), term_rect, width=1, border_radius=4)
 
         t_lbl = self.font_tiny.render("// REAL-TIME TRIGGER RATIONALE LOG (CHRONOLOGICAL STREAM)", True, (70, 130, 180))
-        c_surf.blit(t_lbl, (term_rect.x + 8, term_rect.y + 5))
+        c_surf.blit(t_lbl, (term_rect.x + 8, term_rect.y + 4))
 
         raw_logs = list(audio_state.get("telemetry_logs", []))
-        line_h = 14
-        max_lines = max(1, (term_h - 22) // line_h)
+        line_h = 13
+        max_lines = max(1, (term_h - 18) // line_h)
         display_logs = raw_logs[-max_lines:] if raw_logs else []
 
         if not display_logs:
-            c_surf.blit(self.font_tiny.render("[Listening for audio triggers and rhythm onsets...]", True, (90, 110, 135)), (term_rect.x + 10, term_rect.y + 22))
+            c_surf.blit(self.font_tiny.render("[Listening for audio triggers and rhythm onsets...]", True, (90, 110, 135)), (term_rect.x + 10, term_rect.y + 18))
         else:
-            ly = term_rect.y + 20
+            ly = term_rect.y + 18
             for log_entry in display_logs:
                 if "[KICK]" in log_entry:
                     txt_col = (80, 255, 150)

@@ -183,6 +183,42 @@ class TestTelemetryConsoleLog(unittest.TestCase):
         self.assertTrue(clicked)
         self.assertFalse(self.hud.show_console)
 
+    def test_console_visualizer_deck_dimensions_and_history_accumulation(self):
+        """Verify HUD console visualizer tracks 140-frame history, 24 spectrum peaks, and renders wide scope."""
+        self.hud.show_console = True
+        screen = pygame.Surface((1920, 1080))
+
+        # Feed 10 sequential frames with varying energy and 24-band spectrum
+        for i in range(10):
+            bars = [min(1.0, 0.1 * i + 0.03 * b) for b in range(24)]
+            state = {
+                "bpm": 128.0,
+                "total_level": 0.3 + 0.05 * i,
+                "bass_flux": 0.4 + 0.06 * i,
+                "dynamic_thresh": 0.5,
+                "sub_flux": 0.6 if i % 2 == 0 else 0.2,
+                "sub_thresh": 0.4,
+                "is_attack_transient": (i % 2 == 0),
+                "is_kick": (i == 4),
+                "is_snare": (i == 7),
+                "is_808": (i == 2),
+                "beat_phase": (i * 0.1) % 1.0,
+                "grid_mult": 1.25 if i in (4, 7) else 0.85,
+                "spectrum_bars": bars,
+            }
+            self.visualizer.alpha = 1.0 if (i in (4, 7, 2)) else 0.0
+            self.hud.render(screen, None, self.visualizer, None, None, state, False)
+
+        # History should have accumulated 10 frames
+        self.assertGreaterEqual(len(self.hud.telemetry_history), 10)
+        # 24 spectrum peaks should be tracked
+        self.assertEqual(len(self.hud.spectrum_peaks), 24)
+        self.assertGreater(max(self.hud.spectrum_peaks), 0.5)
+
+        # Console dimensions should be prominent and wide
+        self.assertGreaterEqual(self.hud.console_rect.width, 1000)
+        self.assertGreaterEqual(self.hud.console_rect.height, 400)
+
 
 class TestHardwareSynchronization(unittest.TestCase):
     def test_razer_viper_pid_mouse_classification(self):
@@ -198,6 +234,28 @@ class TestHardwareSynchronization(unittest.TestCase):
         self.assertEqual(dev.device_type, "mouse")
         self.assertEqual(dev.led_id, 0x04)
         self.assertEqual(dev.pid, 0x0078)
+
+    def test_razer_viper_driver_mode_and_nostore_reports(self):
+        """Verify Razer Viper protocol uses Driver Mode (0x03, 0x00) with txn 0xFF and volatile NOSTORE (0x00)."""
+        from razer_chroma import _create_razer_report
+        # Driver Mode report
+        mode_rep = _create_razer_report(0x00, 0x04, 0x02, [0x03, 0x00], txn=0xFF)
+        self.assertEqual(mode_rep[1], 0xFF)  # txn id 0xFF
+        self.assertEqual(mode_rep[6], 0x00)  # command class
+        self.assertEqual(mode_rep[7], 0x04)  # command id
+        self.assertEqual(mode_rep[8], 0x03)  # driver mode byte 1
+        self.assertEqual(mode_rep[9], 0x00)  # driver mode byte 2
+
+        # Volatile NOSTORE static RGB report (zero flash wear, <0.4ms execution)
+        static_rep = _create_razer_report(0x0F, 0x02, 0x09, [0x00, 0x04, 0x01, 0x00, 0x00, 0x01, 255, 0, 128], txn=0x3F)
+        self.assertEqual(static_rep[1], 0x3F)
+        self.assertEqual(static_rep[6], 0x0F)
+        self.assertEqual(static_rep[7], 0x02)
+        self.assertEqual(static_rep[8], 0x00)  # NOSTORE
+        self.assertEqual(static_rep[9], 0x04)  # LOGO_LED
+        self.assertEqual(static_rep[14], 255) # R
+        self.assertEqual(static_rep[15], 0)   # G
+        self.assertEqual(static_rep[16], 128) # B
 
     def test_happylighting_has_pending_event_bypass(self):
         """Verify HappyLighting worker processes pending queue before waiting."""

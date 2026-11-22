@@ -8,6 +8,7 @@ STRICT REQUIREMENT: Zero emojis. Pure high-tech telemetry and geometric accents.
 import time
 import math
 from collections import deque
+import numpy as np
 import pygame
 from config import (
     HUD_AUTO_HIDE_DELAY,
@@ -1871,11 +1872,16 @@ class HUD:
 
         # Update 24 spectrum peaks
         raw_bars = audio_state.get("spectrum_bars", None)
-        if raw_bars is not None and len(raw_bars) >= 24:
+        if raw_bars is not None and len(raw_bars) > 0:
+            cleaned = np.nan_to_num(np.array(raw_bars, dtype=np.float32), nan=0.0, posinf=1.0, neginf=0.0)
+            if len(cleaned) == 24:
+                bars_24 = cleaned
+            else:
+                bars_24 = np.interp(np.linspace(0, len(cleaned) - 1, 24), np.arange(len(cleaned)), cleaned)
             for idx in range(24):
-                val = float(raw_bars[idx])
+                val = float(bars_24[idx])
                 if val > self.spectrum_peaks[idx]:
-                    self.spectrum_peaks[idx] = min(1.0, val)
+                    self.spectrum_peaks[idx] = min(1.0, max(0.0, val))
                 else:
                     self.spectrum_peaks[idx] = max(0.0, self.spectrum_peaks[idx] - 0.015)
         else:
@@ -2093,6 +2099,14 @@ class HUD:
         start_bx = diag_rect.x + 8 + (spec_w - (num_bars * (bar_w + bar_gap) - bar_gap)) // 2
 
         raw_bars = audio_state.get("spectrum_bars", None)
+        bars_24 = None
+        if raw_bars is not None and len(raw_bars) > 0:
+            cleaned = np.nan_to_num(np.array(raw_bars, dtype=np.float32), nan=0.0, posinf=1.0, neginf=0.0)
+            if len(cleaned) == 24:
+                bars_24 = cleaned
+            else:
+                bars_24 = np.interp(np.linspace(0, len(cleaned) - 1, 24), np.arange(len(cleaned)), cleaned)
+
         for b in range(num_bars):
             bx = start_bx + b * (bar_w + bar_gap)
             if b < 4:
@@ -2106,7 +2120,7 @@ class HUD:
             else:
                 b_col = (255, 80, 210)    # High / Air / Hi-hat
 
-            val = float(raw_bars[b]) if (raw_bars is not None and b < len(raw_bars)) else 0.0
+            val = float(bars_24[b]) if (bars_24 is not None and b < len(bars_24)) else 0.0
             val = min(1.0, max(0.0, val))
             bh = int(val * spec_bar_h)
             if bh > 0:

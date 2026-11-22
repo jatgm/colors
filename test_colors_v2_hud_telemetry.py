@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 import numpy as np
 import pygame
+import math
 
 from config import (
     MODE_COLORS_2_0,
@@ -320,3 +321,135 @@ class TestHardwareSynchronization(unittest.TestCase):
         self.assertFalse(is_black)
         # Row 5 (bottom row: Ctrl, Spacebar, Arrows) should be strongly illuminated
         self.assertGreater(matrix[5].max(), 100)
+
+    def test_mouse_lighting_engine_kick_and_808_detonation(self):
+        """Verify MouseLightingEngine triggers full-blast 255 peak strobe flash on kick and 808 events."""
+        from razer_chroma import MouseLightingEngine
+        mouse_eng = MouseLightingEngine()
+
+        # Kick detonation
+        audio_kick = {"is_kick": True, "total_level": 0.8}
+        m_col = mouse_eng.generate_color(
+            0.016, (0, 100, 200), (0, 100, 200), strobe_cut=True, audio_state=audio_kick
+        )
+        # Should blast at maximum 255 brightness
+        self.assertEqual(max(m_col), 255)
+
+        # 808 sub-bass transient detonation
+        mouse_eng2 = MouseLightingEngine()
+        audio_808 = {"is_808": True, "total_level": 0.85}
+        m_col_808 = mouse_eng2.generate_color(
+            0.016, (20, 120, 80), (20, 120, 80), strobe_cut=True, audio_state=audio_808
+        )
+        self.assertEqual(max(m_col_808), 255)
+
+    def test_mouse_lighting_engine_snare_contrast_flash(self):
+        """Verify MouseLightingEngine triggers secondary contrast accent flash on snare events."""
+        from razer_chroma import MouseLightingEngine
+        mouse_eng = MouseLightingEngine()
+        audio_snare = {"is_snare": True, "total_level": 0.75}
+        m_col = mouse_eng.generate_color(
+            0.016, (20, 20, 200), (20, 20, 200), strobe_cut=True, audio_state=audio_snare
+        )
+        self.assertGreater(max(m_col), 60)
+
+    def test_mouse_lighting_engine_strobe_blackout_and_ambient_contrast(self):
+        """Verify MouseLightingEngine outputs true black during strobe cuts and subtle glow in ambient mode."""
+        from razer_chroma import MouseLightingEngine
+        import config
+        mouse_eng = MouseLightingEngine()
+
+        # In strobe mode between beats: absolute black
+        m_col_black = mouse_eng.generate_color(
+            0.016, (0, 0, 0), (0, 0, 0), strobe_cut=True, audio_state={"is_kick": False, "is_snare": False}
+        )
+        self.assertEqual(m_col_black, (0, 0, 0))
+
+        # In real Album Art mode between beats: subtle low baseline glow (<= 65) matching artwork
+        vis_album_art = {"mode": config.MODE_ALBUM_ART, "safe_mode": False}
+        m_col_album = mouse_eng.generate_color(
+            0.016, (0, 240, 255), (0, 240, 255), strobe_cut=False, audio_state=None, vis_state=vis_album_art
+        )
+        self.assertGreater(max(m_col_album), 0)
+        self.assertLessEqual(max(m_col_album), 65)
+
+        # In Smooth Rave Pulse mode between beats: subtle baseline glow
+        vis_smooth = {"mode": config.MODE_SMOOTH_PULSE, "safe_mode": False}
+        m_col_smooth = mouse_eng.generate_color(
+            0.016, (255, 120, 0), (255, 120, 0), strobe_cut=False, audio_state=None, vis_state=vis_smooth
+        )
+        self.assertGreater(max(m_col_smooth), 0)
+        self.assertLessEqual(max(m_col_smooth), 65)
+
+    def test_mouse_lighting_engine_solid_mode_override(self):
+        """Verify solid color mode overrides all audio triggers and outputs solid RGB continuously."""
+        from razer_chroma import MouseLightingEngine
+        mouse_eng = MouseLightingEngine()
+        vis_solid = {"solid_color_active": True, "solid_color": (255, 60, 0)}
+        audio_kick = {"is_kick": True}
+        col = mouse_eng.generate_color(
+            0.016, (0, 0, 0), (0, 0, 0), strobe_cut=True, audio_state=audio_kick, vis_state=vis_solid
+        )
+        self.assertEqual(col, (255, 60, 0))
+
+    def test_mouse_lighting_engine_palette_and_mode_colors(self):
+        """Verify MouseLightingEngine flash inherits album palette or Red Only / Monochrome presets."""
+        from razer_chroma import MouseLightingEngine
+        import config
+        mouse_eng = MouseLightingEngine()
+
+        # In Red Only mode
+        vis_red = {"mode": config.MODE_RED_ONLY}
+        col_red = mouse_eng.generate_color(
+            0.016, (0, 0, 0), (0, 0, 0), strobe_cut=True, audio_state={"is_kick": True}, vis_state=vis_red
+        )
+        self.assertEqual(col_red, (255, 0, 0))
+
+        # In Monochrome mode
+        mouse_eng_mono = MouseLightingEngine()
+        vis_mono = {"mode": config.MODE_MONOCHROME}
+        col_mono = mouse_eng_mono.generate_color(
+            0.016, (0, 0, 0), (0, 0, 0), strobe_cut=True, audio_state={"is_kick": True}, vis_state=vis_mono
+        )
+        self.assertEqual(col_mono, (255, 255, 255))
+
+        # Inherits album art palette color when screen colors are cut
+        mouse_eng_pal = MouseLightingEngine()
+        vis_pal = {"palette_colors": [(200, 100, 50), (40, 20, 10)]}
+        col_pal = mouse_eng_pal.generate_color(
+            0.016, (0, 0, 0), (0, 0, 0), strobe_cut=True, audio_state={"is_kick": True}, vis_state=vis_pal
+        )
+        # Scaled to 255 peak brightness from (200, 100, 50)
+        self.assertEqual(max(col_pal), 255)
+        self.assertEqual(col_pal[0], 255)
+
+    def test_console_visualizer_interpolates_arbitrary_spectrum_bars(self):
+        """Verify HUD telemetry and console visualizer resample arbitrary bar counts (e.g. 8 bars) to 24."""
+        hud = HUD(1280, 720)
+        screen = pygame.Surface((1280, 720))
+        audio_8_bars = {
+            "spectrum_bars": [0.9, 0.7, 0.5, 0.3, 0.2, 0.1, 0.05, 0.02],
+            "total_level": 0.6,
+            "dynamic_thresh": 0.4,
+        }
+        hud._update_telemetry_history(audio_8_bars, None)
+        self.assertEqual(len(hud.spectrum_peaks), 24)
+        # Verify peaks were updated across all 24 resampled bands
+        self.assertGreater(hud.spectrum_peaks[0], 0.0)
+        self.assertGreater(hud.spectrum_peaks[12], 0.0)
+
+    def test_console_visualizer_sanitizes_nan_and_inf_bars(self):
+        """Verify HUD telemetry cleanly sanitizes NaN and Inf values without crashing."""
+        hud = HUD(1280, 720)
+        screen = pygame.Surface((1280, 720))
+        audio_nan_bars = {
+            "spectrum_bars": [float('nan'), float('inf'), -0.5, 0.8],
+            "total_level": 0.5,
+            "dynamic_thresh": 0.3,
+        }
+        hud._update_telemetry_history(audio_nan_bars, None)
+        self.assertEqual(len(hud.spectrum_peaks), 24)
+        # Verify no NaN or Inf in peaks
+        for p in hud.spectrum_peaks:
+            self.assertFalse(math.isnan(p))
+            self.assertFalse(math.isinf(p))

@@ -13,6 +13,7 @@ import queue
 import threading
 import ctypes
 import numpy as np
+import config
 try:
     from ctypes import wintypes
 except ImportError:
@@ -308,6 +309,160 @@ class KeyboardMatrixEngine:
         return self.matrix, is_blackout
 
 
+class MouseLightingEngine:
+    """
+    High-performance audio-reactive lighting engine for Razer Chroma mice.
+    Synchronizes the mouse logo with music beats, kicks, 808 sub-bass transients,
+    and snares with zero latency and high dynamic contrast.
+    Features:
+      - Explosive 100% full-blast 255 peak strobe flash on kick / 808 / drop hits
+      - High-contrast secondary accent flash on snare / clap hits
+      - Crisp micro-tick pulses on hi-hat transients
+      - Instant zero-lag pitch black (0, 0, 0) blackout cut during strobe off-phases
+      - Elegant subtle ambient glow in rave modes to maximize beat contrast
+      - Static solid color override matching HUD solid color presets
+    """
+
+    def __init__(self):
+        self.last_kick_time = 0.0
+        self.last_snare_time = 0.0
+        self.flash_timer = 0.0
+        self.flash_duration = 0.0
+        self.flash_color = (0, 0, 0)
+
+    def generate_color(self, dt, col_left, col_right, strobe_cut, audio_state=None, is_dual=False, vis_state=None):
+        """
+        Calculate target RGB for mouse logo based on audio events, strobe state, and visualizer mode.
+        Returns (r, g, b) tuple of uint8 (0-255).
+        """
+        # 1. Solid Color Mode Override
+        if vis_state and vis_state.get("solid_color_active"):
+            solid_rgb = vis_state.get("solid_color", (255, 0, 0))
+            return (int(solid_rgb[0]), int(solid_rgb[1]), int(solid_rgb[2]))
+
+        now = time.perf_counter()
+        m_mode = vis_state.get("mode", "") if vis_state else ""
+        safe_mode = bool(vis_state and vis_state.get("safe_mode", False))
+
+        is_ambient_mode = (
+            safe_mode
+            or m_mode in (
+                getattr(config, "MODE_ALBUM_ART", "[ALBUM] Cover Art Sync"),
+                getattr(config, "MODE_SMOOTH_PULSE", "Smooth Rave Pulse"),
+                getattr(config, "MODE_SPECTRUM", "Audio Reactive Spectrum"),
+                "MODE_ALBUM_ART",
+                "MODE_SMOOTH_PULSE",
+                "MODE_SPECTRUM",
+                "[ALBUM] Cover Art Sync",
+                "Smooth Rave Pulse",
+                "Audio Reactive Spectrum",
+            )
+        )
+        is_strobe_mode = strobe_cut or not is_ambient_mode
+
+        # 2. Check for beat detonations in audio_state & vis_state
+        if audio_state or vis_state:
+            is_kick = bool(audio_state and (audio_state.get("is_kick", False) or audio_state.get("is_drop", False)))
+            kick_int = float(vis_state.get("kick_intensity", 0.0) if vis_state else 0.0)
+            is_snare = bool(audio_state and audio_state.get("is_snare", False))
+            snare_int = float(vis_state.get("snare_intensity", 0.0) if vis_state else 0.0)
+            is_808 = bool(audio_state and audio_state.get("is_808", False))
+            is_hihat = bool(audio_state and audio_state.get("is_hihat", False))
+
+            palette = vis_state.get("palette_colors", []) if vis_state else []
+            valid_palette_col = None
+            if palette:
+                for pc in palette:
+                    if max(pc) > 30:
+                        valid_palette_col = pc
+                        break
+
+            # Kick / 808 / Drop impact detonation: explosive full-blast flash
+            if (is_kick or is_808 or kick_int > 0.55) and (now - self.last_kick_time >= 0.065):
+                self.last_kick_time = now
+                if m_mode in (getattr(config, "MODE_RED_ONLY", "[RED] Red Only"), "MODE_RED_ONLY", "[RED] Red Only"):
+                    base_c = (255, 0, 0)
+                elif m_mode in (getattr(config, "MODE_MONOCHROME", "Monochrome Blitz"), "MODE_MONOCHROME", "Monochrome Blitz"):
+                    base_c = (255, 255, 255)
+                elif max(col_right) > 30:
+                    base_c = col_right
+                elif max(col_left) > 30:
+                    base_c = col_left
+                elif valid_palette_col:
+                    base_c = valid_palette_col
+                else:
+                    base_c = (0, 240, 255)
+
+                max_c = max(base_c) or 1
+                scale = 255.0 / max_c
+                self.flash_color = (
+                    min(255, int(round(base_c[0] * scale))),
+                    min(255, int(round(base_c[1] * scale))),
+                    min(255, int(round(base_c[2] * scale))),
+                )
+                self.flash_duration = 0.080
+                self.flash_timer = self.flash_duration
+
+            # Snare / Clap accent: high-contrast secondary flash
+            elif (is_snare or snare_int > 0.55) and (now - self.last_snare_time >= 0.075):
+                self.last_snare_time = now
+                if max(col_left) > 30:
+                    sec_c = col_left
+                elif max(col_right) > 30:
+                    sec_c = col_right
+                elif valid_palette_col:
+                    sec_c = valid_palette_col
+                else:
+                    sec_c = (255, 80, 220)
+
+                max_s = max(sec_c) or 1
+                scale_s = 255.0 / max_s
+                self.flash_color = (
+                    min(255, int(round(sec_c[0] * scale_s))),
+                    min(255, int(round(sec_c[1] * scale_s))),
+                    min(255, int(round(sec_c[2] * scale_s))),
+                )
+                self.flash_duration = 0.065
+                self.flash_timer = self.flash_duration
+
+            # Hi-hat micro-tick
+            elif is_hihat and self.flash_timer <= 0.0:
+                self.flash_color = (220, 245, 255)
+                self.flash_duration = 0.035
+                self.flash_timer = self.flash_duration
+
+        # 3. Active beat flash window
+        if self.flash_timer > 0.0:
+            self.flash_timer -= dt
+            if is_strobe_mode or self.flash_timer > (self.flash_duration * 0.4):
+                return self.flash_color
+            else:
+                ratio = max(0.0, self.flash_timer / max(0.001, self.flash_duration * 0.4))
+                return (
+                    int(self.flash_color[0] * ratio),
+                    int(self.flash_color[1] * ratio),
+                    int(self.flash_color[2] * ratio),
+                )
+
+        # 4. In strobe modes, absolute pitch black between beats (or direct strobe flash if active)
+        if is_strobe_mode:
+            base_col = col_right if max(col_right) > 0 else col_left
+            if max(base_col) > 0 and strobe_cut:
+                max_c = max(base_col) or 1
+                scale = 255.0 / max_c
+                return (min(255, int(round(base_col[0] * scale))), min(255, int(round(base_col[1] * scale))), min(255, int(round(base_col[2] * scale))))
+            return (0, 0, 0)
+
+        # 5. In ambient / smooth rave modes, subtle low baseline glow (20-30%) to maintain high contrast with beat hits
+        base_col = col_right if max(col_right) > 0 else col_left
+        max_c = max(base_col)
+        if max_c <= 0:
+            return (0, 0, 0)
+        target_max = min(65, max(15, int(max_c * 0.28)))
+        scale = target_max / max_c
+        return (min(255, int(base_col[0] * scale)), min(255, int(base_col[1] * scale)), min(255, int(base_col[2] * scale)))
+
+
 class RazerChromaManager:
     """Synchronizes screen strobe colors with connected Razer peripherals in real time."""
 
@@ -318,6 +473,7 @@ class RazerChromaManager:
         self.device_count = 0
         self.active_mode = "NONE"
         self.matrix_engine = KeyboardMatrixEngine()
+        self.mouse_engine = MouseLightingEngine()
 
         self.color_queue = queue.Queue(maxsize=2)
         self.running = True
@@ -566,14 +722,12 @@ class RazerChromaManager:
 
         for dev in devs:
             try:
-                self.hid.HidD_SetFeature(dev.handle, cbuf_leg_bright, 91)
                 if dev.device_type == "keyboard":
                     self.hid.HidD_SetFeature(dev.handle, cbuf_kbd_mode, 91)
                     self.hid.HidD_SetFeature(dev.handle, cbuf_kbd_bright, 91)
                     self.hid.HidD_SetFeature(dev.handle, cbuf_black_kbd, 91)
                 elif dev.device_type == "mouse":
                     self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_mode, 91)
-                    self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_bright_ram, 91)
                     self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_bright_flash, 91)
                     self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_static_black, 91)
                     if dev.pid == 0x0078:
@@ -590,6 +744,7 @@ class RazerChromaManager:
                             if self.hid.HidD_GetFeature(dev.handle, (ctypes.c_char * 91).from_buffer(rbuf), 91):
                                 dev.has_scroll_wheel = (rbuf[1] == 0x02)
                 else:
+                    self.hid.HidD_SetFeature(dev.handle, cbuf_leg_bright, 91)
                     self.hid.HidD_SetFeature(dev.handle, cbuf_kbd_bright, 91)
                     self.hid.HidD_SetFeature(dev.handle, cbuf_black_kbd, 91)
             except Exception:
@@ -740,16 +895,18 @@ class RazerChromaManager:
             if not devs or not self.enabled:
                 continue
 
-            # 1. Update Mouse Peripherals immediately (zero latency, volatile NOSTORE reports)
-            m_col = b_right if max(b_right) > 0 else b_left
+            # 1. Update Mouse Peripherals immediately (audio-reactive beat detonations & zero-lag blackout cuts)
+            m_col = self.mouse_engine.generate_color(
+                dt, b_left, b_right, strobe_cut, audio_state=audio_state, is_dual=is_dual, vis_state=vis_state
+            )
             is_mouse_blackout = (max(m_col) == 0)
-            for dev in devs:
-                if dev.device_type != "mouse":
-                    continue
-                try:
-                    led_id = getattr(dev, "led_id", 0x04)
-                    if is_mouse_blackout:
-                        if not was_mouse_blackout:
+            if is_mouse_blackout:
+                if not was_mouse_blackout:
+                    for dev in devs:
+                        if dev.device_type != "mouse":
+                            continue
+                        try:
+                            led_id = getattr(dev, "led_id", 0x04)
                             rep_mblack = _create_razer_report(0x0F, 0x02, 0x09, [0x00, led_id, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x3F)
                             buf_mouse_static_black[1:] = rep_mblack
                             self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_static_black, 91)
@@ -757,12 +914,19 @@ class RazerChromaManager:
                                 rep_sw_b = _create_razer_report(0x0F, 0x02, 0x09, [0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x3F)
                                 buf_sw_static_black[1:] = rep_sw_b
                                 self.hid.HidD_SetFeature(dev.handle, cbuf_sw_static_black, 91)
-                            was_mouse_blackout = True
-                            last_sent_mouse_color = (0, 0, 0)
-                    else:
-                        was_mouse_blackout = False
-                        if m_col != last_sent_mouse_color:
-                            last_sent_mouse_color = m_col
+                        except Exception:
+                            pass
+                    was_mouse_blackout = True
+                    last_sent_mouse_color = (0, 0, 0)
+            else:
+                was_mouse_blackout = False
+                if m_col != last_sent_mouse_color:
+                    last_sent_mouse_color = m_col
+                    for dev in devs:
+                        if dev.device_type != "mouse":
+                            continue
+                        try:
+                            led_id = getattr(dev, "led_id", 0x04)
                             rep_ml = _create_razer_report(0x0F, 0x02, 0x09, [0x00, led_id, 0x01, 0x00, 0x00, 0x01, m_col[0], m_col[1], m_col[2]], txn=0x3F)
                             buf_mouse_logo[1:] = rep_ml
                             self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_logo, 91)
@@ -771,8 +935,8 @@ class RazerChromaManager:
                                 rep_sw = _create_razer_report(0x0F, 0x02, 0x09, [0x00, 0x01, 0x01, 0x00, 0x00, 0x01, m_col[0], m_col[1], m_col[2]], txn=0x3F)
                                 buf_sw[1:] = rep_sw
                                 self.hid.HidD_SetFeature(dev.handle, cbuf_sw, 91)
-                except Exception:
-                    pass
+                        except Exception:
+                            pass
 
             # 2. Update Keyboard Matrix (Per-key / per-row dynamic lighting)
             has_keyboard = any(d.device_type == "keyboard" for d in devs)
@@ -824,8 +988,6 @@ class RazerChromaManager:
                         self.hid.HidD_SetFeature(dev.handle, (ctypes.c_char * 91).from_buffer(buf_gen), 91)
                 except Exception:
                     pass
-                except Exception:
-                    pass
 
     def toggle_enabled(self):
         """Toggle Razer hardware lighting on/off."""
@@ -833,8 +995,22 @@ class RazerChromaManager:
         if self.enabled:
             self._configure_devices()
         else:
-            # Turn LEDs off (blackout)
-            self.set_colors((0, 0, 0), (0, 0, 0))
+            # Turn LEDs off immediately across all devices (blackout)
+            with self.lock:
+                devs = list(self.devices)
+            if self.hid:
+                for d in devs:
+                    try:
+                        txn_off = 0x1F if d.device_type == "keyboard" else 0x3F
+                        rep_sblack = _create_razer_report(0x0F, 0x02, 0x09, [0x00, getattr(d, 'led_id', 0x04), 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=txn_off)
+                        buf_sblack = bytearray(91); buf_sblack[1:] = rep_sblack
+                        self.hid.HidD_SetFeature(d.handle, (ctypes.c_char * 91).from_buffer(buf_sblack), 91)
+                        if d.device_type == "keyboard":
+                            rep_off = _create_razer_report(0x0F, 0x02, 0x06, [0x00, getattr(d, 'led_id', 0x05), 0x00, 0x00, 0x00, 0x00], txn=txn_off)
+                            buf_off = bytearray(91); buf_off[1:] = rep_off
+                            self.hid.HidD_SetFeature(d.handle, (ctypes.c_char * 91).from_buffer(buf_off), 91)
+                    except Exception:
+                        pass
         return self.enabled
 
     def stop(self):

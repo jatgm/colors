@@ -331,6 +331,8 @@ class MouseLightingEngine:
         self.flash_color = (0, 0, 0)
         self.prev_kick_int = 0.0
         self.prev_snare_int = 0.0
+        self.last_state = "IDLE"
+        self.last_color = (0, 0, 0)
 
     def generate_color(self, dt, col_left, col_right, strobe_cut, audio_state=None, is_dual=False, vis_state=None):
         """
@@ -340,7 +342,10 @@ class MouseLightingEngine:
         # 1. Solid Color Mode Override
         if vis_state and vis_state.get("solid_color_active"):
             solid_rgb = vis_state.get("solid_color", (255, 0, 0))
-            return (int(solid_rgb[0]), int(solid_rgb[1]), int(solid_rgb[2]))
+            col = (int(solid_rgb[0]), int(solid_rgb[1]), int(solid_rgb[2]))
+            self.last_state = "SOLID COLOR"
+            self.last_color = col
+            return col
 
         now = time.perf_counter()
         m_mode = vis_state.get("mode", "") if vis_state else ""
@@ -407,6 +412,8 @@ class MouseLightingEngine:
             )
             self.flash_duration = 0.080
             self.flash_timer = self.flash_duration
+            self.last_state = "KICK IMPACT"
+            self.last_color = self.flash_color
             new_flash = True
 
         # Snare / Clap accent: high-contrast secondary flash
@@ -430,6 +437,8 @@ class MouseLightingEngine:
             )
             self.flash_duration = 0.065
             self.flash_timer = self.flash_duration
+            self.last_state = "SNARE ACCENT"
+            self.last_color = self.flash_color
             new_flash = True
 
         # Hi-hat micro-tick (gated in Strobe 2.0 and Bass Only)
@@ -446,6 +455,8 @@ class MouseLightingEngine:
             self.flash_color = (220, 245, 255)
             self.flash_duration = 0.035
             self.flash_timer = self.flash_duration
+            self.last_state = "HIHAT PULSE"
+            self.last_color = self.flash_color
             new_flash = True
 
         if new_flash:
@@ -456,23 +467,33 @@ class MouseLightingEngine:
             # Chopped blackout during burst pulse off-phases (Martin Atomic simulation)
             if max(col_left) == 0 and max(col_right) == 0 and strobe_cut:
                 self.flash_timer = 0.0
+                self.last_state = "OFF-BEAT BLACKOUT"
+                self.last_color = (0, 0, 0)
                 return (0, 0, 0)
 
             if self.flash_timer > 0.0:
                 self.flash_timer -= dt
+                self.last_color = self.flash_color
                 return self.flash_color
 
             # Off-beat blackout cut: mouse cuts sharply to pitch black between beats
+            self.last_state = "OFF-BEAT BLACKOUT"
+            self.last_color = (0, 0, 0)
             return (0, 0, 0)
 
         # 4. In smooth rave pulsing modes (strobe_cut=False), subtle low baseline glow (20-30%)
         base_col = col_right if max(col_right) > 0 else col_left
         max_c = max(base_col)
         if max_c <= 0:
+            self.last_state = "OFF-BEAT BLACKOUT"
+            self.last_color = (0, 0, 0)
             return (0, 0, 0)
         target_max = min(65, max(15, int(max_c * 0.28)))
         scale = target_max / max_c
-        return (min(255, int(base_col[0] * scale)), min(255, int(base_col[1] * scale)), min(255, int(base_col[2] * scale)))
+        col = (min(255, int(base_col[0] * scale)), min(255, int(base_col[1] * scale)), min(255, int(base_col[2] * scale)))
+        self.last_state = "SMOOTH GLOW"
+        self.last_color = col
+        return col
 
 
 class RazerChromaManager:
@@ -486,6 +507,11 @@ class RazerChromaManager:
         self.active_mode = "NONE"
         self.matrix_engine = KeyboardMatrixEngine()
         self.mouse_engine = MouseLightingEngine()
+
+        self.mouse_packet_count = 0
+        self.kbd_packet_count = 0
+        self.last_mouse_color = (0, 0, 0)
+        self.last_mouse_state = "IDLE"
 
         self.color_queue = queue.Queue(maxsize=2)
         self.running = True
@@ -925,18 +951,24 @@ class RazerChromaManager:
                             rep_mblack = _create_razer_report(0x0F, 0x02, 0x09, [0x00, led_id, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x3F)
                             buf_mouse_static_black[1:] = rep_mblack
                             self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_static_black, 91)
+                            self.mouse_packet_count += 1
                             if getattr(dev, "has_scroll_wheel", False):
                                 rep_sw_b = _create_razer_report(0x0F, 0x02, 0x09, [0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0, 0, 0], txn=0x3F)
                                 buf_sw_static_black[1:] = rep_sw_b
                                 self.hid.HidD_SetFeature(dev.handle, cbuf_sw_static_black, 91)
+                                self.mouse_packet_count += 1
                         except Exception:
                             pass
                     was_mouse_blackout = True
                     last_sent_mouse_color = (0, 0, 0)
+                    self.last_mouse_color = (0, 0, 0)
+                    self.last_mouse_state = "OFF-BEAT BLACKOUT"
             else:
                 was_mouse_blackout = False
                 if m_col != last_sent_mouse_color:
                     last_sent_mouse_color = m_col
+                    self.last_mouse_color = m_col
+                    self.last_mouse_state = getattr(self.mouse_engine, "last_state", "FLASH")
                     for dev in devs:
                         if dev.device_type != "mouse":
                             continue
@@ -945,11 +977,13 @@ class RazerChromaManager:
                             rep_ml = _create_razer_report(0x0F, 0x02, 0x09, [0x00, led_id, 0x01, 0x00, 0x00, 0x01, m_col[0], m_col[1], m_col[2]], txn=0x3F)
                             buf_mouse_logo[1:] = rep_ml
                             self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_logo, 91)
+                            self.mouse_packet_count += 1
 
                             if getattr(dev, "has_scroll_wheel", False):
                                 rep_sw = _create_razer_report(0x0F, 0x02, 0x09, [0x00, 0x01, 0x01, 0x00, 0x00, 0x01, m_col[0], m_col[1], m_col[2]], txn=0x3F)
                                 buf_sw[1:] = rep_sw
                                 self.hid.HidD_SetFeature(dev.handle, cbuf_sw, 91)
+                                self.mouse_packet_count += 1
                         except Exception:
                             pass
 
@@ -983,9 +1017,11 @@ class RazerChromaManager:
                                         crc ^= buf_r[i]
                                     buf_r[89] = crc
                                     self.hid.HidD_SetFeature(dev.handle, cbuf_rows[r], 91)
+                                    self.kbd_packet_count += 1
                                     has_drawn = True
                             if has_drawn:
                                 self.hid.HidD_SetFeature(dev.handle, cbuf_draw, 91)
+                                self.kbd_packet_count += 1
                     except Exception:
                         pass
 
@@ -1027,6 +1063,24 @@ class RazerChromaManager:
                     except Exception:
                         pass
         return self.enabled
+
+    def get_mouse_telemetry(self):
+        """Return dict of live mouse status and HID metrics for Console and HUD."""
+        with self.lock:
+            mouse_dev = next((d for d in self.devices if d.device_type == "mouse"), None)
+            kbd_dev = next((d for d in self.devices if d.device_type == "keyboard"), None)
+        return {
+            "connected": mouse_dev is not None,
+            "name": mouse_dev.name if mouse_dev else "None",
+            "pid": mouse_dev.pid if mouse_dev else 0,
+            "led_id": mouse_dev.led_id if mouse_dev else 0x04,
+            "enabled": self.enabled,
+            "color": getattr(self, "last_mouse_color", (0, 0, 0)),
+            "state": getattr(self, "last_mouse_state", "IDLE"),
+            "packets": getattr(self, "mouse_packet_count", 0),
+            "kbd_name": kbd_dev.name if kbd_dev else "None",
+            "kbd_packets": getattr(self, "kbd_packet_count", 0),
+        }
 
     def stop(self):
         """Gracefully release hardware handles and stop worker thread."""

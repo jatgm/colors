@@ -7,6 +7,10 @@ individual monitor targeting, and DPI-aware coordinate mapping.
 import os
 import sys
 import ctypes
+try:
+    import ctypes.util
+except Exception:
+    pass
 import pygame
 from config import DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT
 user32 = None
@@ -211,8 +215,7 @@ class DisplayManager:
 
         elif sys.platform == "darwin":
             try:
-                import ctypes.util
-                cg_path = ctypes.util.find_library("CoreGraphics")
+                cg_path = ctypes.util.find_library("CoreGraphics") if hasattr(ctypes, "util") else None
                 if cg_path:
                     cg = ctypes.cdll.LoadLibrary(cg_path)
                     max_displays = 16

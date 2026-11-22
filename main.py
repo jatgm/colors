@@ -169,8 +169,8 @@ class ColorsApp:
                                 self.hud.show_console = False
                             else:
                                 self.running = False
-                        elif event.key in (pygame.K_BACKQUOTE, pygame.K_F12, pygame.K_g) or (event.key == pygame.K_c and (event.mod & (pygame.KMOD_CTRL | pygame.KMOD_ALT))):
-                            # Toggle Real-Time Logic & Math Telemetry Console (~ / Ctrl+C / F12 / G)
+                        elif event.key in (pygame.K_BACKQUOTE, pygame.K_F12, pygame.K_g) or (event.key == pygame.K_c and (event.mod & (pygame.KMOD_CTRL | pygame.KMOD_ALT | pygame.KMOD_SHIFT))):
+                            # Toggle Real-Time Logic & Math Telemetry Console (~ / Shift+C / Ctrl+C / F12 / G)
                             self.hud.toggle_console()
                         elif event.key == pygame.K_x:
                             # Toggle Crazy Overdrive Mode!
@@ -179,6 +179,11 @@ class ColorsApp:
                         elif event.key == pygame.K_c:
                             # Toggle Razer Chroma Peripheral Lighting
                             self.razer_mgr.toggle_enabled()
+                            state_str = "ENABLED" if self.razer_mgr.enabled else "DISABLED"
+                            if hasattr(self.hud, "chroma_logs"):
+                                t_now = time.time()
+                                ts = time.strftime("%H:%M:%S", time.localtime(t_now)) + f".{int((t_now % 1) * 1000):03d}"
+                                self.hud.chroma_logs.append(f"[{ts}] [CHROMA] Hardware lighting toggled {state_str}")
                         elif event.key == pygame.K_l:
                             # Toggle HappyLighting Room Lighting
                             self.happylighting_mgr.toggle_enabled()

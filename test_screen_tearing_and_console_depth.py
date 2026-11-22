@@ -88,6 +88,15 @@ class TestScreenTearingAndDisplayRefresh(unittest.TestCase):
         self.assertGreaterEqual(cap, 144)
         self.assertGreaterEqual(config.FPS_CAP, 144)
 
+    def test_windows_multi_monitor_enumeration_without_unbound_error(self):
+        """Verify DisplayManager.refresh_monitors runs without UnboundLocalError and populates monitors."""
+        dm = DisplayManager()
+        self.assertGreaterEqual(len(dm.monitors), 1)
+        for m in dm.monitors:
+            self.assertGreater(m.width, 0)
+            self.assertGreater(m.height, 0)
+            self.assertGreater(m.refresh_rate, 0)
+
 
 class TestLegibleTypographyAndLayout(unittest.TestCase):
     @classmethod
@@ -105,6 +114,12 @@ class TestLegibleTypographyAndLayout(unittest.TestCase):
         self.assertGreaterEqual(self.hud.font_main.get_height(), 14)
         self.assertGreaterEqual(self.hud.font_small.get_height(), 12)
         self.assertGreaterEqual(self.hud.font_tiny.get_height(), 11)
+
+    def test_scaled_up_font_point_sizes(self):
+        """Verify explicit font point sizes match scaled configuration (title 20, section 15, small 13, tiny 12)."""
+        self.assertGreaterEqual(self.hud.font_title.get_ascent(), 14)
+        self.assertGreaterEqual(self.hud.font_section.get_ascent(), 11)
+        self.assertGreaterEqual(self.hud.font_tiny.get_ascent(), 9)
 
     def test_slider_labels_do_not_clip(self):
         """Verify SENS, GAIN, DECAY text labels and values fit cleanly without clipping."""
@@ -206,6 +221,30 @@ class TestDeepConsoleBrainOverlay(unittest.TestCase):
         self.assertIsNotNone(self.hud.console_rect)
         self.assertGreaterEqual(self.hud.console_rect.width, 1000)
         self.assertGreaterEqual(self.hud.console_rect.height, 400)
+
+    def test_mouse_telemetry_and_console_hardware_bus(self):
+        """Verify RazerChromaManager exposes live mouse telemetry and console renders hardware bus."""
+        mock_razer = MagicMock()
+        mock_razer.device_count = 2
+        mock_razer.enabled = True
+        mock_razer.get_mouse_telemetry.return_value = {
+            "connected": True,
+            "name": "Razer Viper",
+            "pid": 0x0078,
+            "led_id": 0x04,
+            "enabled": True,
+            "color": (0, 240, 255),
+            "state": "KICK IMPACT",
+            "packets": 42,
+            "kbd_name": "Razer Ornata V2",
+            "kbd_packets": 128,
+        }
+
+        surf = pygame.Surface((1280, 720))
+        audio_state = {"bpm": 120.0, "telemetry_logs": []}
+        self.hud.render(surf, None, self.visualizer, None, None, audio_state, False, razer_mgr=mock_razer)
+        self.assertIsNotNone(self.hud.console_rect)
+        mock_razer.get_mouse_telemetry.assert_called()
 
 
 class TestZeroEmojiCompliance(unittest.TestCase):

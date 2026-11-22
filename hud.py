@@ -52,12 +52,12 @@ class HUD:
         # Monospace / Sci-Fi Telemetry Fonts (Scaled up for comfortable readability)
         pygame.font.init()
         font_stack = "Consolas, Lucida Console, Segoe UI, monospace"
-        self.font_title = pygame.font.SysFont(font_stack, 19, bold=True)
-        self.font_section = pygame.font.SysFont(font_stack, 14, bold=True)
+        self.font_title = pygame.font.SysFont(font_stack, 20, bold=True)
+        self.font_section = pygame.font.SysFont(font_stack, 15, bold=True)
         self.font_main = pygame.font.SysFont(font_stack, 14, bold=True)
-        self.font_small = pygame.font.SysFont(font_stack, 12)
-        self.font_tiny = pygame.font.SysFont(font_stack, 11)
-        self.font_warning = pygame.font.SysFont(font_stack, 13)
+        self.font_small = pygame.font.SysFont(font_stack, 13)
+        self.font_tiny = pygame.font.SysFont(font_stack, 12)
+        self.font_warning = pygame.font.SysFont(font_stack, 14)
 
         # Inactivity & visibility state
         self.visible = True
@@ -202,9 +202,9 @@ class HUD:
 
         # Top Right: Now Playing Native Album Cover Artwork Card
         card_w = min(220, max(180, (panel_w - 60) // 4))
-        card_h = 36
+        card_h = 38
         card_x = panel_x + panel_w - card_w - 18
-        card_y = panel_y + 8
+        card_y = panel_y + 6
         self.card_album_art = pygame.Rect(card_x, card_y, card_w, card_h)
 
         # Waveform Song Progress Bar Deck (height 80px for rich dynamic response)
@@ -671,7 +671,7 @@ class HUD:
 
         if self.alpha <= 1.0:
             if self.show_console:
-                self._render_console_log(screen, audio_state, visualizer, audio_mgr)
+                self._render_console_log(screen, audio_state, visualizer, audio_mgr, razer_mgr=razer_mgr)
             return
 
         alpha_int = int(self.alpha)
@@ -1349,7 +1349,7 @@ class HUD:
         self._render_button(hud_surf, self.btn_sync, sync_label, sync_bg, sync_border, alpha_int)
 
         # 7. Minimal Clean Footer Navigation Strip
-        hints = "ESC Exit/Close   ~ Console Log   2 colors2.0   3 colors1.0   X Overdrive   A Album   O Light Mode   P Palette   TAB Hide HUD"
+        hints = "ESC Exit/Close   ~ / Shift+C Console Log   2 colors2.0   3 colors1.0   X Overdrive   A Album   O Light Mode   P Palette   TAB Hide HUD"
         hint_surf = self.font_tiny.render(hints, True, (120, 138, 165))
         hud_surf.blit(hint_surf, (panel.x + (panel.width - hint_surf.get_width()) // 2, panel.bottom - 16))
 
@@ -2378,13 +2378,46 @@ class HUD:
         h_ratio = (h_flux / max(1e-4, h_thresh)) if h_thresh > 0 else 0.0
         s_ratio = (s_flux / max(1e-4, s_thresh)) if s_thresh > 0 else 0.0
 
-        c_surf.blit(self.font_tiny.render(f"Kick: flux {b_flux:.2f} / th {b_thresh:.2f} ({b_ratio:.2f}x) {'[TRIG]' if b_trig else ''}", True, (0, 255, 140) if b_trig else (150, 175, 200)), (card_4.x + 6, card_4.y + 19))
-        c_surf.blit(self.font_tiny.render(f"808 Sub: {s_flux:.2f} / th {s_thresh:.2f} ({s_ratio:.2f}x) {'[TRIG]' if s_trig else ''}", True, (210, 120, 255) if s_trig else (150, 175, 200)), (card_4.x + 6, card_4.y + 35))
-        c_surf.blit(self.font_tiny.render(f"808 Envelope: {'ATTACK IMPACT' if is_attack else 'SUSTAIN TAIL GATED'} ({t_ratio:.2f}x)", True, (0, 240, 255) if is_attack else (255, 130, 80)), (card_4.x + 6, card_4.y + 51))
-        c_surf.blit(self.font_tiny.render(f"Snare: {h_flux:.2f} / th {h_thresh:.2f} ({h_ratio:.2f}x) | Hat: {'PASS' if h_trig else 'GATED'}", True, (255, 220, 50) if h_trig else (130, 155, 180)), (card_4.x + 6, card_4.y + 67))
+        c_surf.blit(self.font_tiny.render(f"Kick: {b_flux:.2f} / th {b_thresh:.2f} ({b_ratio:.1f}x) {'[TRIG]' if b_trig else ''}", True, (0, 255, 140) if b_trig else (150, 175, 200)), (card_4.x + 6, card_4.y + 19))
+        c_surf.blit(self.font_tiny.render(f"808 Sub: {s_flux:.2f} / th {s_thresh:.2f} ({s_ratio:.1f}x) {'[TRIG]' if s_trig else ''}", True, (210, 120, 255) if s_trig else (150, 175, 200)), (card_4.x + 6, card_4.y + 35))
+        c_surf.blit(self.font_tiny.render(f"808 Env: {'ATTACK IMPACT' if is_attack else 'TAIL GATED'} ({t_ratio:.2f}x)", True, (0, 240, 255) if is_attack else (255, 130, 80)), (card_4.x + 6, card_4.y + 51))
+        c_surf.blit(self.font_tiny.render(f"Snare: {h_flux:.2f} / th {h_thresh:.2f} | Hat: {'PASS' if h_trig else 'GATE'}", True, (255, 220, 50) if h_trig else (130, 155, 180)), (card_4.x + 6, card_4.y + 67))
+
+        # 3.5 Peripheral & Mouse Hardware Telemetry Status Strip
+        hw_y = math_y + math_h + 5
+        hw_h = 24
+        hw_rect = pygame.Rect(12, hw_y, c_w - 24, hw_h)
+        pygame.draw.rect(c_surf, (10, 16, 26, 230), hw_rect, border_radius=3)
+        pygame.draw.rect(c_surf, (30, 48, 70, 160), hw_rect, width=1, border_radius=3)
+
+        m_telem = razer_mgr.get_mouse_telemetry() if (razer_mgr and hasattr(razer_mgr, "get_mouse_telemetry")) else None
+        if m_telem and m_telem.get("connected"):
+            m_col = m_telem.get("color", (0, 0, 0))
+            m_hex = f"#{int(m_col[0]):02X}{int(m_col[1]):02X}{int(m_col[2]):02X}"
+            m_state = m_telem.get("state", "IDLE")
+            m_pkts = m_telem.get("packets", 0)
+            m_name = m_telem.get("name", "Razer Mouse")
+            k_name = m_telem.get("kbd_name", "None")
+            k_pkts = m_telem.get("kbd_packets", 0)
+            is_en = m_telem.get("enabled", True)
+
+            # Draw Mouse Color Swatch Pip
+            pygame.draw.rect(c_surf, (min(255, max(0, m_col[0])), min(255, max(0, m_col[1])), min(255, max(0, m_col[2]))), (hw_rect.x + 8, hw_rect.y + 6, 12, 12), border_radius=2)
+            pygame.draw.rect(c_surf, (255, 255, 255), (hw_rect.x + 8, hw_rect.y + 6, 12, 12), width=1, border_radius=2)
+
+            en_txt = "ONLINE" if is_en else "OFF"
+            m_str1 = f"MOUSE: {m_name} [{en_txt}] | State: {m_state} | Active LED: {m_hex} ({m_col[0]},{m_col[1]},{m_col[2]}) | Dispatched: {m_pkts:,} HID pkts"
+            c_surf.blit(self.font_tiny.render(m_str1, True, (210, 230, 250)), (hw_rect.x + 26, hw_rect.y + 4))
+
+            if k_name and k_name != "None":
+                k_str = f"KBD: {k_name} ({k_pkts:,} pkts)"
+                k_surf = self.font_tiny.render(k_str, True, (130, 175, 215))
+                c_surf.blit(k_surf, (hw_rect.right - k_surf.get_width() - 8, hw_rect.y + 4))
+        else:
+            c_surf.blit(self.font_tiny.render("PERIPHERAL BUS: Standby / Scanning HID Controllers (Press C / Shift+C to toggle hardware)", True, (120, 145, 175)), (hw_rect.x + 8, hw_rect.y + 4))
 
         # 4. Live Chronological Rationale Decision Stream (Bottom section)
-        term_y = math_y + math_h + 6
+        term_y = hw_y + hw_h + 5
         term_h = max(40, c_h - term_y - 8)
         term_rect = pygame.Rect(12, term_y, c_w - 24, term_h)
         pygame.draw.rect(c_surf, (5, 7, 12, 245), term_rect, border_radius=4)
@@ -2403,7 +2436,8 @@ class HUD:
                 time_str = time.strftime("%H:%M:%S", time.localtime(now_t)) + f".{int((now_t % 1) * 1000):03d}"
                 raw_c = getattr(visualizer, "current_color", (0, 240, 255))
                 c_hex = f"#{int(raw_c[0]):02X}{int(raw_c[1]):02X}{int(raw_c[2]):02X}" if isinstance(raw_c, (tuple, list)) and len(raw_c) >= 3 else "#00F0FF"
-                self.chroma_logs.append(f"[{time_str}] [CHROMA] Dispatched Razer Viper 64-byte volatile HID packet -> {c_hex}")
+                m_type = "beat detonation" if is_kick_active else ("snare accent" if is_snare_active else "sub-bass transient")
+                self.chroma_logs.append(f"[{time_str}] [CHROMA] Dispatched Razer Viper 64-byte volatile HID packet ({m_type}) -> {c_hex}")
 
         raw_logs = list(audio_state.get("telemetry_logs", []))
         if hasattr(self, "chroma_logs") and self.chroma_logs:
@@ -2429,6 +2463,8 @@ class HUD:
                     txt_col = (255, 110, 220)
                 elif "[CHROMA]" in log_entry:
                     txt_col = (0, 255, 140)
+                elif "[MOUSE]" in log_entry:
+                    txt_col = (0, 255, 180)
                 elif "[KICK]" in log_entry:
                     txt_col = (80, 255, 150)
                 elif "[SNARE]" in log_entry:

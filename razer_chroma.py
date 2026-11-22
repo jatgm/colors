@@ -329,6 +329,8 @@ class MouseLightingEngine:
         self.flash_timer = 0.0
         self.flash_duration = 0.0
         self.flash_color = (0, 0, 0)
+        self.prev_kick_int = 0.0
+        self.prev_snare_int = 0.0
 
     def generate_color(self, dt, col_left, col_right, strobe_cut, audio_state=None, is_dual=False, vis_state=None):
         """
@@ -347,113 +349,125 @@ class MouseLightingEngine:
         is_ambient_mode = (
             safe_mode
             or m_mode in (
-                getattr(config, "MODE_ALBUM_ART", "[ALBUM] Cover Art Sync"),
                 getattr(config, "MODE_SMOOTH_PULSE", "Smooth Rave Pulse"),
+                getattr(config, "MODE_ALBUM_ART", "[ALBUM] Cover Art Sync"),
                 getattr(config, "MODE_SPECTRUM", "Audio Reactive Spectrum"),
-                "MODE_ALBUM_ART",
                 "MODE_SMOOTH_PULSE",
-                "MODE_SPECTRUM",
-                "[ALBUM] Cover Art Sync",
                 "Smooth Rave Pulse",
+                "MODE_ALBUM_ART",
+                "[ALBUM] Cover Art Sync",
+                "MODE_SPECTRUM",
                 "Audio Reactive Spectrum",
             )
         )
         is_strobe_mode = strobe_cut or not is_ambient_mode
 
         # 2. Check for beat detonations in audio_state & vis_state
-        if audio_state or vis_state:
-            is_kick = bool(audio_state and (audio_state.get("is_kick", False) or audio_state.get("is_drop", False)))
-            kick_int = float(vis_state.get("kick_intensity", 0.0) if vis_state else 0.0)
-            is_snare = bool(audio_state and audio_state.get("is_snare", False))
-            snare_int = float(vis_state.get("snare_intensity", 0.0) if vis_state else 0.0)
-            is_808 = bool(audio_state and audio_state.get("is_808", False))
-            is_hihat = bool(audio_state and audio_state.get("is_hihat", False))
+        is_kick = bool(audio_state and (audio_state.get("is_kick", False) or audio_state.get("is_drop", False)))
+        kick_int = float(vis_state.get("kick_intensity", 0.0) if vis_state else 0.0)
+        is_snare = bool(audio_state and audio_state.get("is_snare", False))
+        snare_int = float(vis_state.get("snare_intensity", 0.0) if vis_state else 0.0)
+        is_808 = bool(audio_state and audio_state.get("is_808", False))
+        is_hihat = bool(audio_state and audio_state.get("is_hihat", False))
 
-            palette = vis_state.get("palette_colors", []) if vis_state else []
-            valid_palette_col = None
-            if palette:
-                for pc in palette:
-                    if max(pc) > 30:
-                        valid_palette_col = pc
-                        break
+        # Transient attack detection: prevent decaying kick/snare intensity from re-triggering flashes
+        kick_hit = is_kick or is_808 or (audio_state is None and kick_int > 0.65 and kick_int > self.prev_kick_int + 0.15)
+        snare_hit = is_snare or (audio_state is None and snare_int > 0.65 and snare_int > self.prev_snare_int + 0.15)
+        self.prev_kick_int = kick_int
+        self.prev_snare_int = snare_int
 
-            # Kick / 808 / Drop impact detonation: explosive full-blast flash
-            if (is_kick or is_808 or kick_int > 0.55) and (now - self.last_kick_time >= 0.065):
-                self.last_kick_time = now
-                if m_mode in (getattr(config, "MODE_RED_ONLY", "[RED] Red Only"), "MODE_RED_ONLY", "[RED] Red Only"):
-                    base_c = (255, 0, 0)
-                elif m_mode in (getattr(config, "MODE_MONOCHROME", "Monochrome Blitz"), "MODE_MONOCHROME", "Monochrome Blitz"):
-                    base_c = (255, 255, 255)
-                elif max(col_right) > 30:
-                    base_c = col_right
-                elif max(col_left) > 30:
-                    base_c = col_left
-                elif valid_palette_col:
-                    base_c = valid_palette_col
-                else:
-                    base_c = (0, 240, 255)
+        palette = vis_state.get("palette_colors", []) if vis_state else []
+        valid_palette_col = None
+        if palette:
+            for pc in palette:
+                if max(pc) > 30:
+                    valid_palette_col = pc
+                    break
 
-                max_c = max(base_c) or 1
-                scale = 255.0 / max_c
-                self.flash_color = (
-                    min(255, int(round(base_c[0] * scale))),
-                    min(255, int(round(base_c[1] * scale))),
-                    min(255, int(round(base_c[2] * scale))),
-                )
-                self.flash_duration = 0.080
-                self.flash_timer = self.flash_duration
+        new_flash = False
 
-            # Snare / Clap accent: high-contrast secondary flash
-            elif (is_snare or snare_int > 0.55) and (now - self.last_snare_time >= 0.075):
-                self.last_snare_time = now
-                if max(col_left) > 30:
-                    sec_c = col_left
-                elif max(col_right) > 30:
-                    sec_c = col_right
-                elif valid_palette_col:
-                    sec_c = valid_palette_col
-                else:
-                    sec_c = (255, 80, 220)
-
-                max_s = max(sec_c) or 1
-                scale_s = 255.0 / max_s
-                self.flash_color = (
-                    min(255, int(round(sec_c[0] * scale_s))),
-                    min(255, int(round(sec_c[1] * scale_s))),
-                    min(255, int(round(sec_c[2] * scale_s))),
-                )
-                self.flash_duration = 0.065
-                self.flash_timer = self.flash_duration
-
-            # Hi-hat micro-tick
-            elif is_hihat and self.flash_timer <= 0.0:
-                self.flash_color = (220, 245, 255)
-                self.flash_duration = 0.035
-                self.flash_timer = self.flash_duration
-
-        # 3. Active beat flash window
-        if self.flash_timer > 0.0:
-            self.flash_timer -= dt
-            if is_strobe_mode or self.flash_timer > (self.flash_duration * 0.4):
-                return self.flash_color
+        # Kick / 808 / Drop impact detonation: explosive full-blast flash
+        if kick_hit and (now - self.last_kick_time >= 0.060):
+            self.last_kick_time = now
+            if m_mode in (getattr(config, "MODE_RED_ONLY", "[RED] Red Only"), "MODE_RED_ONLY", "[RED] Red Only"):
+                base_c = (255, 0, 0)
+            elif m_mode in (getattr(config, "MODE_MONOCHROME", "Monochrome Blitz"), "MODE_MONOCHROME", "Monochrome Blitz"):
+                base_c = (255, 255, 255)
+            elif max(col_right) > 30:
+                base_c = col_right
+            elif max(col_left) > 30:
+                base_c = col_left
+            elif valid_palette_col:
+                base_c = valid_palette_col
             else:
-                ratio = max(0.0, self.flash_timer / max(0.001, self.flash_duration * 0.4))
-                return (
-                    int(self.flash_color[0] * ratio),
-                    int(self.flash_color[1] * ratio),
-                    int(self.flash_color[2] * ratio),
-                )
+                base_c = (0, 240, 255)
 
-        # 4. In strobe modes, absolute pitch black between beats (or direct strobe flash if active)
+            max_c = max(base_c) or 1
+            scale = 255.0 / max_c
+            self.flash_color = (
+                min(255, int(round(base_c[0] * scale))),
+                min(255, int(round(base_c[1] * scale))),
+                min(255, int(round(base_c[2] * scale))),
+            )
+            self.flash_duration = 0.080
+            self.flash_timer = self.flash_duration
+            new_flash = True
+
+        # Snare / Clap accent: high-contrast secondary flash
+        elif snare_hit and (now - self.last_snare_time >= 0.070):
+            self.last_snare_time = now
+            if max(col_left) > 30:
+                sec_c = col_left
+            elif max(col_right) > 30:
+                sec_c = col_right
+            elif valid_palette_col:
+                sec_c = valid_palette_col
+            else:
+                sec_c = (255, 80, 220)
+
+            max_s = max(sec_c) or 1
+            scale_s = 255.0 / max_s
+            self.flash_color = (
+                min(255, int(round(sec_c[0] * scale_s))),
+                min(255, int(round(sec_c[1] * scale_s))),
+                min(255, int(round(sec_c[2] * scale_s))),
+            )
+            self.flash_duration = 0.065
+            self.flash_timer = self.flash_duration
+            new_flash = True
+
+        # Hi-hat micro-tick
+        elif is_hihat and self.flash_timer <= 0.0:
+            self.flash_color = (220, 245, 255)
+            self.flash_duration = 0.035
+            self.flash_timer = self.flash_duration
+            new_flash = True
+
+        if new_flash:
+            return self.flash_color
+
+        has_screen_color = (max(col_left) > 0 or max(col_right) > 0)
+
+        # 3. In strobe modes: sharp zero-lag cuts to black during off-beats and burst blackouts
         if is_strobe_mode:
-            base_col = col_right if max(col_right) > 0 else col_left
-            if max(base_col) > 0 and strobe_cut:
-                max_c = max(base_col) or 1
-                scale = 255.0 / max_c
-                return (min(255, int(round(base_col[0] * scale))), min(255, int(round(base_col[1] * scale))), min(255, int(round(base_col[2] * scale))))
-            return (0, 0, 0)
+            if not has_screen_color:
+                self.flash_timer = 0.0
+                return (0, 0, 0)
 
-        # 5. In ambient / smooth rave modes, subtle low baseline glow (20-30%) to maintain high contrast with beat hits
+            if self.flash_timer > 0.0:
+                self.flash_timer -= dt
+                return self.flash_color
+
+            base_col = col_right if max(col_right) > 0 else col_left
+            max_c = max(base_col) or 1
+            scale = 255.0 / max_c
+            return (
+                min(255, int(round(base_col[0] * scale))),
+                min(255, int(round(base_col[1] * scale))),
+                min(255, int(round(base_col[2] * scale))),
+            )
+
+        # 4. In ambient / smooth rave modes (strobe_cut=False), subtle low baseline glow (20-30%)
         base_col = col_right if max(col_right) > 0 else col_left
         max_c = max(base_col)
         if max_c <= 0:
@@ -728,6 +742,7 @@ class RazerChromaManager:
                     self.hid.HidD_SetFeature(dev.handle, cbuf_black_kbd, 91)
                 elif dev.device_type == "mouse":
                     self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_mode, 91)
+                    self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_bright_ram, 91)
                     self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_bright_flash, 91)
                     self.hid.HidD_SetFeature(dev.handle, cbuf_mouse_static_black, 91)
                     if dev.pid == 0x0078:
@@ -774,6 +789,8 @@ class RazerChromaManager:
             vis_state = {
                 "kick_intensity": getattr(visualizer, "kick_intensity", 0.0),
                 "snare_intensity": getattr(visualizer, "snare_intensity", 0.0),
+                "strobe_alpha": float(getattr(visualizer, "last_eff_intensity_0", 0.0)),
+                "decay": float(getattr(visualizer, "decay_rate", 16.0)),
                 "palette_colors": list(getattr(visualizer, "palette_colors", [])),
                 "solid_color_active": getattr(visualizer, "solid_color_active", False),
                 "solid_color": getattr(visualizer, "solid_color", (255, 0, 0)),

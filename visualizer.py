@@ -648,7 +648,7 @@ class VisualizerEngine:
 
         # Chopped blackout during burst train off-phases (Martin Atomic simulation)
         if self.burst_remaining > 0 and not self.burst_is_on:
-            is_flash_active = False
+            return (0, 0, 0), (0, 0, 0), True
 
         if is_flash_active:
             def _scale_flash(col):

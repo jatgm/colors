@@ -423,6 +423,96 @@ class TestHardwareSynchronization(unittest.TestCase):
         self.assertEqual(max(col_pal), 255)
         self.assertEqual(col_pal[0], 255)
 
+    def test_mouse_lighting_engine_strobe_off_beat_sharp_blackout(self):
+        """Verify mouse cuts sharply to black (0, 0, 0) immediately on strobe off-beats and does not remain lit."""
+        from razer_chroma import MouseLightingEngine
+        import config
+        mouse_eng = MouseLightingEngine()
+        vis_strobe = {
+            "mode": config.MODE_STROBE_2_0,
+            "kick_intensity": 0.0,
+            "snare_intensity": 0.0,
+            "strobe_alpha": 0.0,
+            "decay": 16.0,
+        }
+
+        # Beat frame: explosive strobe color
+        col_beat = mouse_eng.generate_color(
+            0.016, (0, 240, 255), (0, 240, 255), strobe_cut=True, audio_state={"is_kick": True}, vis_state=vis_strobe
+        )
+        self.assertEqual(col_beat, (0, 240, 255))
+
+        # Off-beat frame immediately following the hit: must cut sharply to black
+        col_off = mouse_eng.generate_color(
+            0.016, (0, 0, 0), (0, 0, 0), strobe_cut=True, audio_state={"is_kick": False}, vis_state=vis_strobe
+        )
+        self.assertEqual(col_off, (0, 0, 0))
+
+    def test_mouse_lighting_engine_decay_tail_does_not_retrigger(self):
+        """Verify that decaying kick_intensity or strobe_alpha in vis_state does not re-trigger or hold mouse lit."""
+        from razer_chroma import MouseLightingEngine
+        import config, time
+        mouse_eng = MouseLightingEngine()
+        vis_strobe = {
+            "mode": config.MODE_PSYCHO_OVERDRIVE,
+            "kick_intensity": 1.0,
+            "snare_intensity": 0.0,
+            "strobe_alpha": 0.9,
+            "decay": 8.0,
+        }
+
+        # Beat attack frame
+        col_hit = mouse_eng.generate_color(
+            0.016, (255, 0, 128), (255, 0, 128), strobe_cut=True, audio_state={"is_kick": True}, vis_state=vis_strobe
+        )
+        self.assertEqual(max(col_hit), 255)
+
+        # Subsequent frames where kick_intensity is decaying (e.g. 0.85, 0.70, 0.58)
+        # Even after 70ms has elapsed, decaying tail must not re-trigger a new flash
+        time.sleep(0.075)
+        for decaying_val in [0.85, 0.70, 0.58]:
+            vis_strobe["kick_intensity"] = decaying_val
+            vis_strobe["strobe_alpha"] = decaying_val * 0.9
+            col_decay = mouse_eng.generate_color(
+                0.016, (0, 0, 0), (0, 0, 0), strobe_cut=True, audio_state={"is_kick": False}, vis_state=vis_strobe
+            )
+            self.assertEqual(col_decay, (0, 0, 0))
+
+    def test_mouse_lighting_engine_burst_chopped_blackouts(self):
+        """Verify that during burst pulse off-phases, mouse sharply cuts to black in lockstep with visualizer."""
+        from razer_chroma import MouseLightingEngine
+        from visualizer import VisualizerEngine
+        import config
+        mouse_eng = MouseLightingEngine()
+        vis = VisualizerEngine(1920, 1080)
+        vis.set_mode(config.MODE_PSYCHO_OVERDRIVE)
+
+        # Trigger kick burst
+        audio_kick = {"is_kick": True, "total_level": 0.85, "raw_peak": 0.85}
+        vis.update(0.016, audio_kick)
+        c_l, c_r, strobe_cut = vis.get_peripheral_colors()
+        vis_state = {
+            "kick_intensity": vis.kick_intensity,
+            "mode": vis.mode,
+            "strobe_alpha": getattr(vis, "last_eff_intensity_0", 0.0),
+        }
+        col_burst_on = mouse_eng.generate_color(0.016, c_l, c_r, strobe_cut, audio_state=audio_kick, vis_state=vis_state)
+        self.assertGreater(max(col_burst_on), 0)
+
+        # Advance to burst chopped blackout
+        audio_off = {"is_kick": False, "total_level": 0.4, "raw_peak": 0.4}
+        # Simulate until burst off-phase
+        found_blackout = False
+        for _ in range(8):
+            vis.update(0.016, audio_off)
+            c_l, c_r, strobe_cut = vis.get_peripheral_colors()
+            vis_state["kick_intensity"] = vis.kick_intensity
+            col = mouse_eng.generate_color(0.016, c_l, c_r, strobe_cut, audio_state=audio_off, vis_state=vis_state)
+            if c_l == (0, 0, 0) and strobe_cut:
+                self.assertEqual(col, (0, 0, 0))
+                found_blackout = True
+        self.assertTrue(found_blackout)
+
     def test_console_visualizer_interpolates_arbitrary_spectrum_bars(self):
         """Verify HUD telemetry and console visualizer resample arbitrary bar counts (e.g. 8 bars) to 24."""
         hud = HUD(1280, 720)

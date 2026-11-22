@@ -346,21 +346,15 @@ class MouseLightingEngine:
         m_mode = vis_state.get("mode", "") if vis_state else ""
         safe_mode = bool(vis_state and vis_state.get("safe_mode", False))
 
-        is_ambient_mode = (
+        is_smooth_mode = (
             safe_mode
             or m_mode in (
                 getattr(config, "MODE_SMOOTH_PULSE", "Smooth Rave Pulse"),
-                getattr(config, "MODE_ALBUM_ART", "[ALBUM] Cover Art Sync"),
-                getattr(config, "MODE_SPECTRUM", "Audio Reactive Spectrum"),
                 "MODE_SMOOTH_PULSE",
                 "Smooth Rave Pulse",
-                "MODE_ALBUM_ART",
-                "[ALBUM] Cover Art Sync",
-                "MODE_SPECTRUM",
-                "Audio Reactive Spectrum",
             )
         )
-        is_strobe_mode = strobe_cut or not is_ambient_mode
+        is_strobe_mode = not is_smooth_mode or strobe_cut
 
         # 2. Check for beat detonations in audio_state & vis_state
         is_kick = bool(audio_state and (audio_state.get("is_kick", False) or audio_state.get("is_drop", False)))
@@ -370,9 +364,11 @@ class MouseLightingEngine:
         is_808 = bool(audio_state and audio_state.get("is_808", False))
         is_hihat = bool(audio_state and audio_state.get("is_hihat", False))
 
-        # Transient attack detection: prevent decaying kick/snare intensity from re-triggering flashes
-        kick_hit = is_kick or is_808 or (audio_state is None and kick_int > 0.65 and kick_int > self.prev_kick_int + 0.15)
-        snare_hit = is_snare or (audio_state is None and snare_int > 0.65 and snare_int > self.prev_snare_int + 0.15)
+        # Transient attack detection: trigger on hit event or rising-edge spike, ignore decaying tails
+        is_kick_attack = bool(kick_int > 0.65 and kick_int > self.prev_kick_int + 0.15)
+        is_snare_attack = bool(snare_int > 0.65 and snare_int > self.prev_snare_int + 0.15)
+        kick_hit = is_kick or is_808 or is_kick_attack
+        snare_hit = is_snare or is_snare_attack
         self.prev_kick_int = kick_int
         self.prev_snare_int = snare_int
 
@@ -436,8 +432,17 @@ class MouseLightingEngine:
             self.flash_timer = self.flash_duration
             new_flash = True
 
-        # Hi-hat micro-tick
-        elif is_hihat and self.flash_timer <= 0.0:
+        # Hi-hat micro-tick (gated in Strobe 2.0 and Bass Only)
+        is_hihat_allowed = m_mode not in (
+            getattr(config, "MODE_STROBE_2_0", "colors2.0"),
+            getattr(config, "MODE_COLORS_2_0", "colors2.0"),
+            getattr(config, "MODE_BASS_ONLY", "[BASS] Bass Only"),
+            "colors2.0",
+            "MODE_STROBE_2_0",
+            "MODE_BASS_ONLY",
+            "[BASS] Bass Only",
+        )
+        if not new_flash and is_hihat and is_hihat_allowed and self.flash_timer <= 0.0:
             self.flash_color = (220, 245, 255)
             self.flash_duration = 0.035
             self.flash_timer = self.flash_duration
@@ -446,11 +451,10 @@ class MouseLightingEngine:
         if new_flash:
             return self.flash_color
 
-        has_screen_color = (max(col_left) > 0 or max(col_right) > 0)
-
         # 3. In strobe modes: sharp zero-lag cuts to black during off-beats and burst blackouts
         if is_strobe_mode:
-            if not has_screen_color:
+            # Chopped blackout during burst pulse off-phases (Martin Atomic simulation)
+            if max(col_left) == 0 and max(col_right) == 0 and strobe_cut:
                 self.flash_timer = 0.0
                 return (0, 0, 0)
 
@@ -458,16 +462,10 @@ class MouseLightingEngine:
                 self.flash_timer -= dt
                 return self.flash_color
 
-            base_col = col_right if max(col_right) > 0 else col_left
-            max_c = max(base_col) or 1
-            scale = 255.0 / max_c
-            return (
-                min(255, int(round(base_col[0] * scale))),
-                min(255, int(round(base_col[1] * scale))),
-                min(255, int(round(base_col[2] * scale))),
-            )
+            # Off-beat blackout cut: mouse cuts sharply to pitch black between beats
+            return (0, 0, 0)
 
-        # 4. In ambient / smooth rave modes (strobe_cut=False), subtle low baseline glow (20-30%)
+        # 4. In smooth rave pulsing modes (strobe_cut=False), subtle low baseline glow (20-30%)
         base_col = col_right if max(col_right) > 0 else col_left
         max_c = max(base_col)
         if max_c <= 0:

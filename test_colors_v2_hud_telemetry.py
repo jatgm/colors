@@ -365,15 +365,20 @@ class TestHardwareSynchronization(unittest.TestCase):
         )
         self.assertEqual(m_col_black, (0, 0, 0))
 
-        # In real Album Art mode between beats: subtle low baseline glow (<= 65) matching artwork
-        vis_album_art = {"mode": config.MODE_ALBUM_ART, "safe_mode": False}
-        m_col_album = mouse_eng.generate_color(
+        # In Album Art strobe mode between beats: must cut sharply to black (0, 0, 0) and not stay solid
+        vis_album_art = {"mode": config.MODE_ALBUM_ART, "safe_mode": False, "palette_colors": [(0, 240, 255)]}
+        m_col_album_off = mouse_eng.generate_color(
             0.016, (0, 240, 255), (0, 240, 255), strobe_cut=False, audio_state=None, vis_state=vis_album_art
         )
-        self.assertGreater(max(m_col_album), 0)
-        self.assertLessEqual(max(m_col_album), 65)
+        self.assertEqual(m_col_album_off, (0, 0, 0))
 
-        # In Smooth Rave Pulse mode between beats: subtle baseline glow
+        # In Album Art mode on a beat hit: explodes with full 255 peak color
+        m_col_album_kick = mouse_eng.generate_color(
+            0.016, (0, 240, 255), (0, 240, 255), strobe_cut=False, audio_state={"is_kick": True}, vis_state=vis_album_art
+        )
+        self.assertEqual(max(m_col_album_kick), 255)
+
+        # In Smooth Rave Pulse mode between beats: subtle baseline glow (<= 65)
         vis_smooth = {"mode": config.MODE_SMOOTH_PULSE, "safe_mode": False}
         m_col_smooth = mouse_eng.generate_color(
             0.016, (255, 120, 0), (255, 120, 0), strobe_cut=False, audio_state=None, vis_state=vis_smooth
@@ -512,6 +517,48 @@ class TestHardwareSynchronization(unittest.TestCase):
                 self.assertEqual(col, (0, 0, 0))
                 found_blackout = True
         self.assertTrue(found_blackout)
+
+    def test_mouse_lighting_engine_rising_edge_attack_with_audio_state_dict(self):
+        """Verify rising-edge transient attack triggers 255 flash even if audio_state dict has is_kick=False."""
+        from razer_chroma import MouseLightingEngine
+        import config
+        mouse_eng = MouseLightingEngine()
+        vis_strobe = {"mode": config.MODE_COLORS_2_0, "kick_intensity": 0.0}
+
+        # Baseline quiet frame
+        col_quiet = mouse_eng.generate_color(
+            0.016, (0, 0, 0), (0, 0, 0), strobe_cut=True, audio_state={"is_kick": False}, vis_state=vis_strobe
+        )
+        self.assertEqual(col_quiet, (0, 0, 0))
+
+        # Sudden rising edge attack in kick_intensity (0.0 -> 0.90) with audio_state dict present
+        vis_strobe["kick_intensity"] = 0.90
+        col_attack = mouse_eng.generate_color(
+            0.016, (0, 200, 255), (0, 200, 255), strobe_cut=True, audio_state={"is_kick": False}, vis_state=vis_strobe
+        )
+        self.assertEqual(max(col_attack), 255)
+
+    def test_mouse_lighting_engine_strobe_cuts_to_black_despite_nonzero_col_left(self):
+        """Verify that on strobe off-beats, mouse strictly cuts to (0, 0, 0) even if col_left is non-zero."""
+        from razer_chroma import MouseLightingEngine
+        import config
+        mouse_eng = MouseLightingEngine()
+        vis_strobe = {"mode": config.MODE_ALBUM_ART, "strobe_alpha": 0.6, "decay": 16.0}
+
+        # Beat frame
+        col_hit = mouse_eng.generate_color(
+            0.016, (255, 100, 0), (255, 100, 0), strobe_cut=True, audio_state={"is_kick": True}, vis_state=vis_strobe
+        )
+        self.assertEqual(max(col_hit), 255)
+
+        # Advance frames until 80ms flash duration has expired (6 frames * 16ms = 96ms)
+        # Even with non-zero ambient/decaying screen color (e.g. col_left = (120, 40, 10)), off-beat must be (0, 0, 0)
+        col_off = None
+        for _ in range(6):
+            col_off = mouse_eng.generate_color(
+                0.016, (120, 40, 10), (120, 40, 10), strobe_cut=True, audio_state={"is_kick": False}, vis_state=vis_strobe
+            )
+        self.assertEqual(col_off, (0, 0, 0))
 
     def test_console_visualizer_interpolates_arbitrary_spectrum_bars(self):
         """Verify HUD telemetry and console visualizer resample arbitrary bar counts (e.g. 8 bars) to 24."""
